@@ -854,7 +854,7 @@ async function handlePublish(req: Request): Promise<Response> {
     const svc = createClient(env.supabaseUrl, env.supabaseKey);
     const results: any[] = [];
 
-    for (const itemNumber of input.item_numbers.slice(0, 20)) {
+    for (const itemNumber of input.item_numbers) {
       try {
         const { data: supplierItem } = await svc.from("supplier_items").select("*").eq("item_number", itemNumber).maybeSingle();
         if (!supplierItem) { results.push({ itemNumber, status: "not_found" }); continue; }
