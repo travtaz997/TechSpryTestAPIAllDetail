@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { supabase } from '../lib/supabase';
-import { CreditCard, Building2, Package, CheckCircle, AlertCircle, Truck, MapPin } from 'lucide-react';
+import { CreditCard, Building2, Package, AlertCircle, Truck, MapPin } from 'lucide-react';
 import StripePayment from '../components/StripePayment';
 
 type AuthContextValue = ReturnType<typeof useAuth>;
@@ -68,8 +68,6 @@ export default function Checkout() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [orderComplete, setOrderComplete] = useState(false);
-  const [orderId, setOrderId] = useState('');
   const [error, setError] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
@@ -287,9 +285,8 @@ export default function Checkout() {
           throw new Error(getErrorMessage(statusError, 'Failed to confirm order.'));
         }
 
-        setOrderId(createdOrderId);
-        setOrderComplete(true);
         clearCart();
+        redirectToConfirmation(createdOrderId, 'terms');
       }
     } catch (err) {
       console.error('Checkout error:', err);
@@ -297,6 +294,11 @@ export default function Checkout() {
     } finally {
       setProcessing(false);
     }
+  }
+
+  function redirectToConfirmation(orderId: string, method: 'card' | 'terms') {
+    const params = new URLSearchParams({ method });
+    window.location.href = `/order-confirmation/${orderId}?${params.toString()}`;
   }
 
   async function finalizeStripePayment(paymentIntentId: string, options: { fromReturn?: boolean } = {}) {
@@ -342,10 +344,10 @@ export default function Checkout() {
         throw new Error('Payment succeeded but we could not locate the related order. Please contact support.');
       }
 
-      setOrderId(data.orderId);
       setShowPayment(false);
-      setOrderComplete(true);
+      setTempOrderId('');
       clearCart();
+      return data.orderId as string;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Payment was processed but we could not confirm the order. Please contact support.');
     } finally {
@@ -355,15 +357,24 @@ export default function Checkout() {
         setProcessing(false);
       }
     }
+
+    return null;
   }
 
   async function handlePaymentReturn(paymentIntentId: string) {
-    await finalizeStripePayment(paymentIntentId, { fromReturn: true });
-    window.history.replaceState({}, '', '/checkout');
+    const confirmedOrderId = await finalizeStripePayment(paymentIntentId, { fromReturn: true });
+    if (confirmedOrderId) {
+      redirectToConfirmation(confirmedOrderId, 'card');
+    } else {
+      window.history.replaceState({}, '', '/checkout');
+    }
   }
 
   async function handlePaymentSuccess(paymentIntentId: string) {
-    await finalizeStripePayment(paymentIntentId);
+    const confirmedOrderId = await finalizeStripePayment(paymentIntentId);
+    if (confirmedOrderId) {
+      redirectToConfirmation(confirmedOrderId, 'card');
+    }
   }
 
   function handlePaymentError(errorMessage: string) {
@@ -379,7 +390,7 @@ export default function Checkout() {
   }
 
 
-  if (items.length === 0 && !orderComplete) {
+  if (items.length === 0 && !showPayment) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="text-center">
@@ -392,44 +403,6 @@ export default function Checkout() {
           >
             Browse Catalog
           </a>
-        </div>
-      </div>
-    );
-  }
-
-  if (orderComplete) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-          <CheckCircle className="w-16 h-16 text-green-600 mx-auto mb-4" />
-          <h1 className="text-3xl font-bold text-gray-800 mb-4">Order Placed Successfully!</h1>
-          <p className="text-gray-600 mb-2">Thank you for your order.</p>
-          <p className="text-sm text-gray-500 mb-6">
-            Order ID: <span className="font-mono font-semibold">{orderId.slice(0, 8).toUpperCase()}</span>
-          </p>
-          {(user?.email || guestEmail) && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-              <p className="text-sm text-blue-800">
-                A confirmation email will be sent to {user?.email || guestEmail}
-              </p>
-            </div>
-          )}
-          <div className="flex gap-4 justify-center">
-            {user && (
-              <a
-                href="/orders"
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold"
-              >
-                View Orders
-              </a>
-            )}
-            <a
-              href="/catalog"
-              className="bg-white text-blue-600 border border-blue-600 px-6 py-3 rounded-lg hover:bg-blue-50 transition font-semibold"
-            >
-              Continue Shopping
-            </a>
-          </div>
         </div>
       </div>
     );
