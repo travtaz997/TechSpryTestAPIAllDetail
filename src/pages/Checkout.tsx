@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, NetTermsStatus } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { supabase } from '../lib/supabase';
 import {
@@ -154,6 +154,18 @@ export default function Checkout() {
   const shippingCost = selectedShipping.cost;
   const orderTotal = subtotal + shippingCost;
 
+  const accountType: 'consumer' | 'business' = (profile?.account_type as 'consumer' | 'business' | undefined) || 'consumer';
+  const isBusinessAccount = accountType === 'business';
+  const netTermsStatus = useMemo<NetTermsStatus>(() => {
+    if (customer?.terms_allowed) {
+      return 'approved';
+    }
+    return (profile?.net_terms_status as NetTermsStatus | undefined) || 'not_requested';
+  }, [customer?.terms_allowed, profile?.net_terms_status]);
+  const netTermsApproved = isBusinessAccount && netTermsStatus === 'approved';
+  const netTermsPending = isBusinessAccount && netTermsStatus === 'pending';
+  const netTermsDeclined = isBusinessAccount && netTermsStatus === 'declined';
+
   const paymentContactEmail = useMemo(() => {
     const source = user?.email || pendingPayment?.email || guestEmail;
     return source?.trim() || undefined;
@@ -307,6 +319,12 @@ export default function Checkout() {
 
     loadCustomer();
   }, [user, profile, guestEmail]);
+
+  useEffect(() => {
+    if (!netTermsApproved && paymentMethod === 'terms') {
+      setPaymentMethod('card');
+    }
+  }, [netTermsApproved, paymentMethod]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -590,8 +608,14 @@ export default function Checkout() {
 
       const activeProfile = user ? await resolveActiveProfile() : null;
 
-      if (paymentMethod === 'terms' && !customer?.terms_allowed) {
-        throw new Error('Net payment terms are not available for your account.');
+      if (paymentMethod === 'terms' && !netTermsApproved) {
+        if (netTermsPending) {
+          throw new Error('Your NET terms application is still under review. Please choose a credit card to complete this order.');
+        }
+        if (netTermsDeclined) {
+          throw new Error('Your NET terms application is not approved. Please pay by credit card or contact support.');
+        }
+        throw new Error('NET terms are not currently available for your account.');
       }
 
       if (paymentMethod === 'terms' && !activeProfile?.customer_id) {
@@ -1038,25 +1062,44 @@ export default function Checkout() {
                   </div>
                 </label>
 
-                {customer?.terms_allowed && (
-                  <label
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition ${
-                      paymentMethod === 'terms' ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment"
-                      value="terms"
-                      checked={paymentMethod === 'terms'}
-                      onChange={() => setPaymentMethod('terms')}
-                      className="mt-1"
-                    />
-                    <div className="flex-1">
-                      <div className="font-semibold text-gray-800">Invoice / Net Terms</div>
-                      <div className="text-sm text-gray-600">Place the order now and pay later using your account terms.</div>
-                    </div>
-                  </label>
+                {isBusinessAccount && (
+                  <div className="space-y-2">
+                    <label
+                      className={`flex items-start gap-3 rounded-lg border-2 p-4 transition ${
+                        paymentMethod === 'terms' && netTermsApproved
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200'
+                      } ${netTermsApproved ? 'cursor-pointer hover:bg-gray-50' : 'cursor-not-allowed opacity-60'}`}
+                    >
+                      <input
+                        type="radio"
+                        name="payment"
+                        value="terms"
+                        checked={paymentMethod === 'terms'}
+                        onChange={() => netTermsApproved && setPaymentMethod('terms')}
+                        disabled={!netTermsApproved}
+                        className="mt-1"
+                      />
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-800">Invoice / NET Terms</div>
+                        <div className="text-sm text-gray-600">
+                          {netTermsApproved
+                            ? 'Place the order now and pay later using your approved account terms.'
+                            : 'NET terms will be available once your application is approved.'}
+                        </div>
+                      </div>
+                    </label>
+                    {!netTermsApproved && (
+                      <p className="ml-9 text-xs text-gray-500">
+                        {netTermsPending
+                          ? 'Your NET terms application is under review. We will notify you as soon as it is approved.'
+                          : netTermsDeclined
+                          ? 'Your NET terms request was declined. Contact our credit team or update your application in the account portal.'
+                          : 'Apply for NET terms from your account dashboard to enable invoice payments.'}
+                        {' '}<a href="/account" className="text-blue-600 hover:text-blue-700 font-semibold">Manage account</a>
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 <div>

@@ -1,17 +1,23 @@
-import { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth, NetTermsApplication, NetTermsStatus } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { User, Building2, Mail, Phone, MapPin, Save, LogOut, CheckCircle, AlertCircle } from 'lucide-react';
-
-interface Customer {
-  id: string;
-  company: string;
-  email: string;
-  phone: string | null;
-  billing_address: any;
-  shipping_address: any;
-  terms_allowed: boolean;
-}
+import {
+  User as UserIcon,
+  Building2,
+  Mail,
+  Phone,
+  MapPin,
+  Save,
+  LogOut,
+  CheckCircle,
+  AlertCircle,
+  CreditCard,
+  Clock,
+  FileText,
+  Briefcase,
+  ShieldCheck,
+  XCircle,
+} from 'lucide-react';
 
 interface Address {
   name: string;
@@ -23,6 +29,32 @@ interface Address {
   zip: string;
   country: string;
   phone: string;
+}
+
+interface CustomerRecord {
+  id: string;
+  company: string;
+  email: string;
+  phone: string | null;
+  billing_address: Partial<Address> | null;
+  shipping_address: Partial<Address> | null;
+  terms_allowed: boolean;
+}
+
+interface ProfileFormState {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  businessName: string;
+  jobTitle: string;
+  website: string;
+}
+
+interface NetTermsFormState {
+  accountsPayableEmail: string;
+  estimatedMonthlySpend: string;
+  taxId: string;
+  notes: string;
 }
 
 const emptyAddress: Address = {
@@ -37,154 +69,436 @@ const emptyAddress: Address = {
   phone: '',
 };
 
+const initialProfileForm: ProfileFormState = {
+  firstName: '',
+  lastName: '',
+  phone: '',
+  businessName: '',
+  jobTitle: '',
+  website: '',
+};
+
+const initialNetTermsForm: NetTermsFormState = {
+  accountsPayableEmail: '',
+  estimatedMonthlySpend: '',
+  taxId: '',
+  notes: '',
+};
+
+function mergeAddress(address: Partial<Address> | null | undefined): Address {
+  if (!address) {
+    return { ...emptyAddress };
+  }
+  return { ...emptyAddress, ...address };
+}
+
+function formatStatus(status: NetTermsStatus): {
+  label: string;
+  badgeClass: string;
+  description: string;
+  icon: JSX.Element;
+  panelClass: string;
+} {
+  switch (status) {
+    case 'approved':
+      return {
+        label: 'Approved',
+        badgeClass: 'bg-green-100 text-green-700 border-green-200',
+        description: 'NET terms are active on your account. You can place orders on terms during checkout.',
+        icon: <ShieldCheck className="w-5 h-5 text-green-600" />,
+        panelClass: 'border-green-200 bg-green-50 text-green-800',
+      };
+    case 'pending':
+      return {
+        label: 'In Review',
+        badgeClass: 'bg-blue-100 text-blue-700 border-blue-200',
+        description: 'Our credit team is reviewing your application. You can continue to pay by card while we finalize approval.',
+        icon: <Clock className="w-5 h-5 text-blue-600" />,
+        panelClass: 'border-blue-200 bg-blue-50 text-blue-800',
+      };
+    case 'declined':
+      return {
+        label: 'Declined',
+        badgeClass: 'bg-red-100 text-red-700 border-red-200',
+        description: 'Your NET terms application was declined. You may reapply with updated information at any time.',
+        icon: <XCircle className="w-5 h-5 text-red-500" />,
+        panelClass: 'border-red-200 bg-red-50 text-red-800',
+      };
+    default:
+      return {
+        label: 'Not Requested',
+        badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
+        description: 'Apply to pay by invoice with 30-day NET terms. Approval typically takes 1-2 business days.',
+        icon: <CreditCard className="w-5 h-5 text-gray-500" />,
+        panelClass: 'border-gray-200 bg-gray-50 text-gray-700',
+      };
+  }
+}
+
+function addressesMatch(a: Address, b: Address) {
+  const fields: (keyof Address)[] = ['name', 'company', 'address1', 'address2', 'city', 'state', 'zip', 'country', 'phone'];
+  return fields.every((field) => (a[field] || '').toLowerCase().trim() === (b[field] || '').toLowerCase().trim());
+}
+
 export default function Account() {
-  const { user, profile, signOut } = useAuth();
-  const [customer, setCustomer] = useState<Customer | null>(null);
+  const { user, profile, signOut, refreshProfile } = useAuth();
+  const [customer, setCustomer] = useState<CustomerRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [creatingCompany, setCreatingCompany] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  const [companyName, setCompanyName] = useState('');
-  const [companyEmail, setCompanyEmail] = useState('');
-  const [companyPhone, setCompanyPhone] = useState('');
-  const [billingAddress, setBillingAddress] = useState<Address>(emptyAddress);
-  const [shippingAddress, setShippingAddress] = useState<Address>(emptyAddress);
+  const [profileForm, setProfileForm] = useState<ProfileFormState>(initialProfileForm);
+  const [billingAddress, setBillingAddress] = useState<Address>({ ...emptyAddress });
+  const [shippingAddress, setShippingAddress] = useState<Address>({ ...emptyAddress });
   const [sameAsBilling, setSameAsBilling] = useState(true);
+  const [feedback, setFeedback] = useState('');
+  const [error, setError] = useState('');
+  const [netTermsForm, setNetTermsForm] = useState<NetTermsFormState>(initialNetTermsForm);
+  const [netTermsMessage, setNetTermsMessage] = useState('');
+  const [netTermsError, setNetTermsError] = useState('');
+  const [submittingNetTerms, setSubmittingNetTerms] = useState(false);
+  const [statusSynced, setStatusSynced] = useState(false);
+
+  const accountType: 'consumer' | 'business' = (profile?.account_type as 'consumer' | 'business' | undefined) || 'consumer';
+  const isBusiness = accountType === 'business';
+
+  const derivedNetTermsStatus: NetTermsStatus = useMemo(() => {
+    if (customer?.terms_allowed) {
+      return 'approved';
+    }
+    return profile?.net_terms_status || 'not_requested';
+  }, [customer?.terms_allowed, profile?.net_terms_status]);
+
+  const statusMeta = formatStatus(derivedNetTermsStatus);
 
   useEffect(() => {
-    if (user && profile?.customer_id) {
-      loadCustomer();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    loadCustomerRecord();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, profile?.customer_id]);
+
+  useEffect(() => {
+    setProfileForm((prev) => ({
+      ...prev,
+      firstName: profile?.first_name || '',
+      lastName: profile?.last_name || '',
+      phone: profile?.phone || customer?.phone || '',
+      businessName: customer?.company || prev.businessName || '',
+      jobTitle: profile?.business_profile?.jobTitle || '',
+      website: profile?.business_profile?.website || '',
+    }));
+
+    if (profile?.net_terms_application) {
+      const application = profile.net_terms_application as NetTermsApplication;
+      setNetTermsForm({
+        accountsPayableEmail: application.accountsPayableEmail || '',
+        estimatedMonthlySpend: application.estimatedMonthlySpend || '',
+        taxId: application.taxId || profile.business_profile?.taxId || '',
+        notes: application.notes || '',
+      });
     } else {
-      setLoading(false);
-      if (user?.email) {
-        setCompanyEmail(user.email);
-        setBillingAddress({ ...emptyAddress, name: user.email });
-        setShippingAddress({ ...emptyAddress, name: user.email });
-      }
+      setNetTermsForm({
+        ...initialNetTermsForm,
+        taxId: profile?.business_profile?.taxId || '',
+      });
     }
-  }, [user, profile]);
+  }, [profile, customer]);
 
-  async function loadCustomer() {
-    try {
-      setLoading(true);
-
-      const { data, error } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('id', profile?.customer_id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (data) {
-        setCustomer(data);
-        setCompanyName(data.company || '');
-        setCompanyEmail(data.email || '');
-        setCompanyPhone(data.phone || '');
-
-        if (data.billing_address && Object.keys(data.billing_address).length > 0) {
-          setBillingAddress({ ...emptyAddress, ...data.billing_address });
-        }
-
-        if (data.shipping_address && Object.keys(data.shipping_address).length > 0) {
-          setShippingAddress({ ...emptyAddress, ...data.shipping_address });
-          setSameAsBilling(false);
-        }
+  useEffect(() => {
+    async function syncApprovedStatus() {
+      if (!profile?.id) return;
+      if (statusSynced) return;
+      if (derivedNetTermsStatus !== 'approved') return;
+      if (profile.net_terms_status === 'approved') {
+        setStatusSynced(true);
+        return;
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load account details');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreateCompany(e: React.FormEvent) {
-    e.preventDefault();
-    setCreatingCompany(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      if (!profile?.id) {
-        throw new Error('User profile not found');
-      }
-
-      if (!companyName || !companyEmail) {
-        throw new Error('Company name and email are required');
-      }
-
-      const finalShippingAddress = sameAsBilling ? billingAddress : shippingAddress;
-
-      const { data: newCustomer, error: customerError } = await supabase
-        .from('customers')
-        .insert({
-          company: companyName,
-          email: companyEmail,
-          phone: companyPhone || null,
-          billing_address: billingAddress,
-          shipping_address: finalShippingAddress,
-          terms_allowed: false,
-        })
-        .select()
-        .single();
-
-      if (customerError) throw customerError;
 
       const { error: updateError } = await supabase
         .from('users')
-        .update({ customer_id: newCustomer.id })
+        .update({
+          net_terms_status: 'approved',
+          net_terms_reviewed_at: new Date().toISOString(),
+        })
         .eq('id', profile.id);
 
-      if (updateError) throw updateError;
+      if (!updateError) {
+        setStatusSynced(true);
+        refreshProfile();
+      }
+    }
 
-      setSuccess('Company profile created successfully!');
+    syncApprovedStatus();
+  }, [derivedNetTermsStatus, profile, refreshProfile, statusSynced]);
 
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+  async function loadCustomerRecord() {
+    try {
+      setLoading(true);
+
+      if (!profile?.customer_id) {
+        hydrateAddresses(null);
+        setCustomer(null);
+        setLoading(false);
+        return;
+      }
+
+      const { data, error: fetchError } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', profile.customer_id)
+        .maybeSingle();
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      const customerRecord = (data || null) as CustomerRecord | null;
+      setCustomer(customerRecord);
+      hydrateAddresses(customerRecord);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create company profile');
+      console.error('Failed to load customer account', err);
+      setError('We were unable to load your saved account details. Please try again later.');
     } finally {
-      setCreatingCompany(false);
+      setLoading(false);
     }
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
+  function hydrateAddresses(customerRecord: CustomerRecord | null) {
+    const billing = mergeAddress(customerRecord?.billing_address);
+    const shipping = mergeAddress(customerRecord?.shipping_address);
+
+    setBillingAddress(billing);
+
+    if (customerRecord?.shipping_address && !addressesMatch(billing, shipping)) {
+      setSameAsBilling(false);
+      setShippingAddress(shipping);
+    } else {
+      setSameAsBilling(true);
+      setShippingAddress(billing);
+    }
+  }
+
+  function updateBilling(field: keyof Address, value: string) {
+    setBillingAddress((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateShipping(field: keyof Address, value: string) {
+    setShippingAddress((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateProfileField<Field extends keyof ProfileFormState>(field: Field, value: ProfileFormState[Field]) {
+    setProfileForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateNetTermsField<Field extends keyof NetTermsFormState>(field: Field, value: NetTermsFormState[Field]) {
+    setNetTermsForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function ensureCustomerRecord(company: string, phone: string | null, email: string) {
+    if (profile?.customer_id) {
+      return profile.customer_id;
+    }
+
+    const { data, error: insertError } = await supabase
+      .from('customers')
+      .insert({
+        company,
+        email,
+        phone,
+        terms_allowed: false,
+        billing_address: null,
+        shipping_address: null,
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    const newCustomerId = data?.id as string | undefined;
+    if (!newCustomerId) {
+      throw new Error('Failed to create customer account record.');
+    }
+
+    await supabase
+      .from('users')
+      .update({ customer_id: newCustomerId })
+      .eq('id', profile?.id || '');
+
+    return newCustomerId;
+  }
+
+  async function handleSaveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    if (!profile || !user) return;
+
     setError('');
-    setSuccess('');
+    setFeedback('');
+    setSaving(true);
 
     try {
-      if (!profile?.customer_id) {
-        throw new Error('No customer account linked');
+      const companyName = isBusiness
+        ? profileForm.businessName.trim() || customer?.company || ''
+        : profileForm.businessName.trim() || `${profileForm.firstName} ${profileForm.lastName}`.trim() || user.email || 'Customer';
+
+      if (!companyName.trim()) {
+        throw new Error('Please provide your business or contact name.');
       }
 
-      const finalShippingAddress = sameAsBilling ? billingAddress : shippingAddress;
+      const normalizedBilling = { ...billingAddress };
+      const normalizedShipping = sameAsBilling ? { ...billingAddress } : { ...shippingAddress };
 
-      const { error } = await supabase
+      const customerId = await ensureCustomerRecord(companyName, profileForm.phone.trim() || null, user.email || customer?.email || '');
+
+      const { error: customerError } = await supabase
         .from('customers')
         .update({
           company: companyName,
-          email: companyEmail,
-          phone: companyPhone || null,
-          billing_address: billingAddress,
-          shipping_address: finalShippingAddress,
+          phone: profileForm.phone.trim() || null,
+          email: user.email || customer?.email,
+          billing_address: normalizedBilling,
+          shipping_address: normalizedShipping,
         })
-        .eq('id', profile.customer_id);
+        .eq('id', customerId);
 
-      if (error) throw error;
+      if (customerError) {
+        throw customerError;
+      }
 
-      setSuccess('Account updated successfully!');
-      await loadCustomer();
+      const { error: userError } = await supabase
+        .from('users')
+        .update({
+          first_name: profileForm.firstName.trim() || null,
+          last_name: profileForm.lastName.trim() || null,
+          phone: profileForm.phone.trim() || null,
+          business_profile: isBusiness
+            ? {
+                jobTitle: profileForm.jobTitle.trim() || undefined,
+                website: profileForm.website.trim() || undefined,
+                taxId: netTermsForm.taxId.trim() || profile?.business_profile?.taxId || undefined,
+              }
+            : null,
+        })
+        .eq('id', profile.id);
 
-      setTimeout(() => setSuccess(''), 3000);
+      if (userError) {
+        throw userError;
+      }
+
+      setFeedback('Account details saved successfully.');
+      await Promise.all([refreshProfile(), loadCustomerRecord()]);
+      setTimeout(() => setFeedback(''), 4000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update account');
+      const message = err instanceof Error ? err.message : 'We could not save your updates. Please try again.';
+      setError(message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleNetTermsSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!profile || !user) return;
+
+    setNetTermsError('');
+    setNetTermsMessage('');
+
+    if (derivedNetTermsStatus === 'approved') {
+      setNetTermsMessage('Your NET terms are already active. No additional action is needed.');
+      return;
+    }
+
+    if (!netTermsForm.accountsPayableEmail.trim()) {
+      setNetTermsError('Please provide an accounts payable email.');
+      return;
+    }
+
+    if (!netTermsForm.estimatedMonthlySpend.trim()) {
+      setNetTermsError('Please provide your estimated monthly spend.');
+      return;
+    }
+
+    if (!netTermsForm.taxId.trim()) {
+      setNetTermsError('Please provide a tax ID or EIN.');
+      return;
+    }
+
+    setSubmittingNetTerms(true);
+
+    try {
+      const companyName = profileForm.businessName.trim() || customer?.company || '';
+      const application: NetTermsApplication = {
+        legalBusinessName: companyName,
+        contactName: `${profileForm.firstName} ${profileForm.lastName}`.trim(),
+        contactEmail: user.email || customer?.email || undefined,
+        contactPhone: profileForm.phone.trim() || customer?.phone || undefined,
+        accountsPayableEmail: netTermsForm.accountsPayableEmail.trim(),
+        estimatedMonthlySpend: netTermsForm.estimatedMonthlySpend.trim(),
+        taxId: netTermsForm.taxId.trim(),
+        notes: netTermsForm.notes.trim() || undefined,
+        billingAddress: billingAddress,
+        shippingAddress: sameAsBilling ? billingAddress : shippingAddress,
+      };
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          net_terms_status: 'pending',
+          net_terms_requested_at: new Date().toISOString(),
+          net_terms_application: application,
+        })
+        .eq('id', profile.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      await supabase
+        .from('customers')
+        .update({ terms_allowed: false })
+        .eq('id', profile.customer_id || customer?.id || '');
+
+      setNetTermsMessage('Your application has been submitted. We will notify you as soon as it is reviewed.');
+      await refreshProfile();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'We were unable to submit your application. Please try again later.';
+      setNetTermsError(message);
+    } finally {
+      setSubmittingNetTerms(false);
+    }
+  }
+
+  async function handleWithdrawApplication() {
+    if (!profile) return;
+    setSubmittingNetTerms(true);
+    setNetTermsMessage('');
+    setNetTermsError('');
+
+    try {
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          net_terms_status: 'not_requested',
+          net_terms_requested_at: null,
+          net_terms_application: null,
+        })
+        .eq('id', profile.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setNetTermsForm(initialNetTermsForm);
+      setNetTermsMessage('Your NET terms request has been withdrawn. You can apply again at any time.');
+      await refreshProfile();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to withdraw your application. Please contact support.';
+      setNetTermsError(message);
+    } finally {
+      setSubmittingNetTerms(false);
     }
   }
 
@@ -193,811 +507,534 @@ export default function Account() {
     window.location.href = '/';
   }
 
-  function updateBillingAddress(field: keyof Address, value: string) {
-    setBillingAddress({ ...billingAddress, [field]: value });
-  }
-
-  function updateShippingAddress(field: keyof Address, value: string) {
-    setShippingAddress({ ...shippingAddress, [field]: value });
-  }
-
   if (!user) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-800 mb-4">Sign In Required</h1>
-          <p className="text-gray-600 mb-6">Please sign in to view your account.</p>
-          <a
-            href="/login"
-            className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold"
-          >
-            Sign In
-          </a>
-        </div>
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
+        <h1 className="text-3xl font-bold text-gray-800 mb-4">Sign In Required</h1>
+        <p className="text-gray-600 mb-6">Create an account or sign in to manage your orders, addresses, and payment options.</p>
+        <a
+          href="/login"
+          className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+        >
+          Sign In
+        </a>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Account Settings</h1>
-          <p className="text-gray-600">Manage your profile and company information</p>
+          <h1 className="text-3xl font-bold text-gray-900">My Account</h1>
+          <p className="text-gray-600">
+            Manage your personal details, business information, addresses, and NET terms preferences in one place.
+          </p>
         </div>
         <button
           onClick={handleSignOut}
-          className="flex items-center gap-2 px-4 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition font-semibold"
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
         >
-          <LogOut className="w-5 h-5" />
+          <LogOut className="w-4 h-4" />
           Sign Out
         </button>
       </div>
 
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm lg:col-span-2">
+          <div className="flex items-center gap-3 mb-4">
+            <UserIcon className="w-6 h-6 text-blue-600" />
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Account Snapshot</h2>
+              <p className="text-sm text-gray-600">{user.email}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded-lg border border-gray-200 p-4">
+              <p className="text-xs uppercase text-gray-500">Account Type</p>
+              <p className="mt-2 text-sm font-semibold text-gray-900 capitalize">{accountType}</p>
+              <p className="mt-1 text-xs text-gray-500">
+                {isBusiness
+                  ? 'Business accounts can save company info, manage PO numbers, and apply for NET terms.'
+                  : 'Consumers can securely store addresses and view order history.'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-4">
+              <p className="text-xs uppercase text-gray-500">NET Terms</p>
+              <span className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${statusMeta.badgeClass}`}>
+                {statusMeta.icon}
+                {statusMeta.label}
+              </span>
+              <p className="mt-2 text-xs text-gray-500 leading-relaxed">{statusMeta.description}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-4">
+              <p className="text-xs uppercase text-gray-500">Order History</p>
+              <p className="mt-2 text-sm font-semibold text-gray-900">View all orders</p>
+              <p className="mt-1 text-xs text-gray-500">Track shipment status, invoices, and reorder from your order history.</p>
+              <a href="/orders" className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700">
+                Manage Orders
+                <FileText className="w-4 h-4" />
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-3">
+          <h3 className="text-lg font-semibold text-gray-900">Need a quick checkout?</h3>
+          <p className="text-sm text-gray-600">
+            Guests can check out with a credit card, but creating an account lets you track orders and save addresses for future purchases.
+          </p>
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
+            <p className="font-semibold">Tip</p>
+            <p>Update your default billing and shipping addresses below to speed up checkout.</p>
+          </div>
+          <a
+            href="/checkout"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+          >
+            Start Checkout
+            <CreditCard className="w-4 h-4" />
+          </a>
+        </div>
+      </div>
+
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-start gap-2">
-          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex items-start gap-2">
+          <AlertCircle className="w-5 h-5 mt-0.5" />
           <span>{error}</span>
         </div>
       )}
 
-      {success && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 flex items-start gap-2">
-          <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <span>{success}</span>
+      {feedback && (
+        <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700 flex items-start gap-2">
+          <CheckCircle className="w-5 h-5 mt-0.5" />
+          <span>{feedback}</span>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <form onSubmit={handleSaveProfile} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-6">
+        <div className="flex items-center gap-3">
+          <Building2 className="w-6 h-6 text-blue-600" />
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Profile & Contact Information</h2>
+            <p className="text-sm text-gray-600">
+              Keep your contact and company details up to date to ensure accurate invoices and shipping information.
+            </p>
+          </div>
         </div>
-      ) : (
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <User className="w-6 h-6 text-blue-600" />
-              <h2 className="text-xl font-bold text-gray-800">User Information</h2>
-            </div>
-            <div className="space-y-4">
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <UserIcon className="w-4 h-4 text-gray-500" />
+              First Name
+            </label>
+            <input
+              type="text"
+              value={profileForm.firstName}
+              onChange={(event) => updateProfileField('firstName', event.target.value)}
+              required
+              className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <UserIcon className="w-4 h-4 text-gray-500" />
+              Last Name
+            </label>
+            <input
+              type="text"
+              value={profileForm.lastName}
+              onChange={(event) => updateProfileField('lastName', event.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <Phone className="w-4 h-4 text-gray-500" />
+              Phone Number
+            </label>
+            <input
+              type="tel"
+              value={profileForm.phone}
+              onChange={(event) => updateProfileField('phone', event.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              placeholder="(555) 123-4567"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <Mail className="w-4 h-4 text-gray-500" />
+              Email
+            </label>
+            <input
+              type="email"
+              value={user.email || ''}
+              disabled
+              className="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-gray-600"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+              <Briefcase className="w-4 h-4 text-gray-500" />
+              {isBusiness ? 'Business Name' : 'Company / Organization (optional)'}
+            </label>
+            <input
+              type="text"
+              value={profileForm.businessName}
+              onChange={(event) => updateProfileField('businessName', event.target.value)}
+              required={isBusiness}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              placeholder={isBusiness ? 'Registered business name' : 'Add if you shop on behalf of a company'}
+            />
+          </div>
+          {isBusiness && (
+            <>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-600">
-                  <Mail className="w-4 h-4" />
-                  {user.email}
-                </div>
+                <label className="text-sm font-medium text-gray-700">Job Title</label>
+                <input
+                  type="text"
+                  value={profileForm.jobTitle}
+                  onChange={(event) => updateProfileField('jobTitle', event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <div className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-600 capitalize">
-                  {profile?.role || 'buyer'}
-                </div>
+                <label className="text-sm font-medium text-gray-700">Website</label>
+                <input
+                  type="url"
+                  value={profileForm.website}
+                  onChange={(event) => updateProfileField('website', event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  placeholder="https://"
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-blue-600" />
+              <h3 className="text-lg font-semibold text-gray-900">Billing Address</h3>
+            </div>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={billingAddress.name}
+                onChange={(event) => updateBilling('name', event.target.value)}
+                placeholder="Full Name"
+                required
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                type="text"
+                value={billingAddress.company}
+                onChange={(event) => updateBilling('company', event.target.value)}
+                placeholder="Company"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                type="text"
+                value={billingAddress.address1}
+                onChange={(event) => updateBilling('address1', event.target.value)}
+                placeholder="Address Line 1"
+                required
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                type="text"
+                value={billingAddress.address2}
+                onChange={(event) => updateBilling('address2', event.target.value)}
+                placeholder="Address Line 2"
+                className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <input
+                  type="text"
+                  value={billingAddress.city}
+                  onChange={(event) => updateBilling('city', event.target.value)}
+                  placeholder="City"
+                  required
+                  className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={billingAddress.state}
+                  onChange={(event) => updateBilling('state', event.target.value)}
+                  placeholder="State"
+                  required
+                  className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={billingAddress.zip}
+                  onChange={(event) => updateBilling('zip', event.target.value)}
+                  placeholder="ZIP"
+                  required
+                  className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <input
+                  type="text"
+                  value={billingAddress.country}
+                  onChange={(event) => updateBilling('country', event.target.value)}
+                  placeholder="Country"
+                  className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="tel"
+                  value={billingAddress.phone}
+                  onChange={(event) => updateBilling('phone', event.target.value)}
+                  placeholder="Phone"
+                  className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             </div>
           </div>
 
-          {profile?.customer_id && customer ? (
-            <form onSubmit={handleSave}>
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <Building2 className="w-6 h-6 text-blue-600" />
-                  <h2 className="text-xl font-bold text-gray-800">Company Information</h2>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-blue-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Shipping Address</h3>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={sameAsBilling}
+                  onChange={(event) => setSameAsBilling(event.target.checked)}
+                  className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                />
+                Same as billing
+              </label>
+            </div>
+
+            {!sameAsBilling && (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={shippingAddress.name}
+                  onChange={(event) => updateShipping('name', event.target.value)}
+                  placeholder="Full Name"
+                  required
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={shippingAddress.company}
+                  onChange={(event) => updateShipping('company', event.target.value)}
+                  placeholder="Company"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={shippingAddress.address1}
+                  onChange={(event) => updateShipping('address1', event.target.value)}
+                  placeholder="Address Line 1"
+                  required
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  value={shippingAddress.address2}
+                  onChange={(event) => updateShipping('address2', event.target.value)}
+                  placeholder="Address Line 2"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <input
+                    type="text"
+                    value={shippingAddress.city}
+                    onChange={(event) => updateShipping('city', event.target.value)}
+                    placeholder="City"
+                    required
+                    className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={shippingAddress.state}
+                    onChange={(event) => updateShipping('state', event.target.value)}
+                    placeholder="State"
+                    required
+                    className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={shippingAddress.zip}
+                    onChange={(event) => updateShipping('zip', event.target.value)}
+                    placeholder="ZIP"
+                    required
+                    className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
-
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="company" className="block text-sm font-medium text-gray-700 mb-1">
-                        Company Name <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        id="company"
-                        type="text"
-                        value={companyName}
-                        onChange={(e) => setCompanyName(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Your Company Name"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-                        Company Email <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        id="email"
-                        type="email"
-                        value={companyEmail}
-                        onChange={(e) => setCompanyEmail(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="company@example.com"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                      <Phone className="w-4 h-4 inline mr-1" />
-                      Phone Number
-                    </label>
-                    <input
-                      id="phone"
-                      type="tel"
-                      value={companyPhone}
-                      onChange={(e) => setCompanyPhone(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="(555) 123-4567"
-                    />
-                  </div>
-
-                  {customer.terms_allowed && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                      <p className="text-sm text-green-700 font-semibold">
-                        <CheckCircle className="w-4 h-4 inline mr-1" />
-                        Net Payment Terms: Approved
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="border-t border-gray-200 pt-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <MapPin className="w-6 h-6 text-blue-600" />
-                      <h3 className="text-lg font-bold text-gray-800">Billing Address</h3>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Contact Name <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.name}
-                            onChange={(e) => updateBillingAddress('name', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="John Doe"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Company
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.company}
-                            onChange={(e) => updateBillingAddress('company', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Company Name"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Address Line 1 <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={billingAddress.address1}
-                          onChange={(e) => updateBillingAddress('address1', e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="123 Main Street"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Address Line 2
-                        </label>
-                        <input
-                          type="text"
-                          value={billingAddress.address2}
-                          onChange={(e) => updateBillingAddress('address2', e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="Apt, Suite, Unit, Building (optional)"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            City <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.city}
-                            onChange={(e) => updateBillingAddress('city', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="City"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            State <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.state}
-                            onChange={(e) => updateBillingAddress('state', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="CA"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            ZIP <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.zip}
-                            onChange={(e) => updateBillingAddress('zip', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="12345"
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Country
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.country}
-                            onChange={(e) => updateBillingAddress('country', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="US"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Phone
-                          </label>
-                          <input
-                            type="tel"
-                            value={billingAddress.phone}
-                            onChange={(e) => updateBillingAddress('phone', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="(555) 123-4567"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <MapPin className="w-6 h-6 text-blue-600" />
-                      <h3 className="text-lg font-bold text-gray-800">Shipping Address</h3>
-                    </div>
-
-                    <div className="mb-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sameAsBilling}
-                          onChange={(e) => setSameAsBilling(e.target.checked)}
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Same as billing address</span>
-                      </label>
-                    </div>
-
-                    {!sameAsBilling && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Contact Name <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.name}
-                              onChange={(e) => updateShippingAddress('name', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="John Doe"
-                              required
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Company
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.company}
-                              onChange={(e) => updateShippingAddress('company', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="Company Name"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Address Line 1 <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={shippingAddress.address1}
-                            onChange={(e) => updateShippingAddress('address1', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="123 Main Street"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Address Line 2
-                          </label>
-                          <input
-                            type="text"
-                            value={shippingAddress.address2}
-                            onChange={(e) => updateShippingAddress('address2', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Apt, Suite, Unit, Building (optional)"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              City <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.city}
-                              onChange={(e) => updateShippingAddress('city', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="City"
-                              required
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              State <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.state}
-                              onChange={(e) => updateShippingAddress('state', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="CA"
-                              required
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              ZIP <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.zip}
-                              onChange={(e) => updateShippingAddress('zip', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="12345"
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Country
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.country}
-                              onChange={(e) => updateShippingAddress('country', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="US"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Phone
-                            </label>
-                            <input
-                              type="tel"
-                              value={shippingAddress.phone}
-                              onChange={(e) => updateShippingAddress('phone', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="(555) 123-4567"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    <Save className="w-5 h-5" />
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </button>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <input
+                    type="text"
+                    value={shippingAddress.country}
+                    onChange={(event) => updateShipping('country', event.target.value)}
+                    placeholder="Country"
+                    className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="tel"
+                    value={shippingAddress.phone}
+                    onChange={(event) => updateShipping('phone', event.target.value)}
+                    placeholder="Phone"
+                    className="rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
               </div>
-            </form>
+            )}
+
+            {sameAsBilling && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                We will use your billing address for shipping until you specify a different location.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-gray-500 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            Changes affect future orders immediately.
+          </div>
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      </form>
+
+      {isBusiness && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-6">
+          <div className="flex items-center gap-3">
+            <CreditCard className="w-6 h-6 text-blue-600" />
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Business Credit & NET Terms</h2>
+              <p className="text-sm text-gray-600">
+                Apply for NET payment terms to place orders now and pay by invoice later. Approval usually takes 1-2 business days.
+              </p>
+            </div>
+          </div>
+
+          <div className={`rounded-lg border ${statusMeta.panelClass} p-4`}>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              {statusMeta.icon}
+              {statusMeta.label}
+            </div>
+            <p className="mt-2 text-sm text-gray-700">{statusMeta.description}</p>
+          </div>
+
+          {derivedNetTermsStatus === 'approved' ? (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700 flex items-start gap-2">
+              <CheckCircle className="w-5 h-5 mt-0.5" />
+              <span>
+                Your NET terms are active. Select “Invoice / NET Terms” during checkout to place orders using your available credit.
+              </span>
+            </div>
           ) : (
-            <form onSubmit={handleCreateCompany}>
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <Building2 className="w-6 h-6 text-blue-600" />
-                  <h2 className="text-xl font-bold text-gray-800">Create Company Profile</h2>
+            <form onSubmit={handleNetTermsSubmit} className="space-y-4">
+              {netTermsError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5" />
+                  <span>{netTermsError}</span>
                 </div>
+              )}
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                  <p className="text-sm text-blue-800">
-                    Set up your company profile to enable checkout and order management features.
-                  </p>
+              {netTermsMessage && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 mt-0.5" />
+                  <span>{netTermsMessage}</span>
                 </div>
+              )}
 
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="newCompany" className="block text-sm font-medium text-gray-700 mb-1">
-                        Company Name <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        id="newCompany"
-                        type="text"
-                        value={companyName}
-                        onChange={(e) => setCompanyName(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Your Company Name"
-                        required
-                      />
-                    </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Accounts Payable Email</label>
+                  <input
+                    type="email"
+                    value={netTermsForm.accountsPayableEmail}
+                    onChange={(event) => updateNetTermsField('accountsPayableEmail', event.target.value)}
+                    required
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    placeholder="ap@company.com"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Estimated Monthly Spend</label>
+                  <input
+                    type="text"
+                    value={netTermsForm.estimatedMonthlySpend}
+                    onChange={(event) => updateNetTermsField('estimatedMonthlySpend', event.target.value)}
+                    required
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    placeholder="$2,500"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Tax ID / EIN</label>
+                  <input
+                    type="text"
+                    value={netTermsForm.taxId}
+                    onChange={(event) => updateNetTermsField('taxId', event.target.value)}
+                    required
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Notes for Credit Team (optional)</label>
+                  <textarea
+                    value={netTermsForm.notes}
+                    onChange={(event) => updateNetTermsField('notes', event.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                    placeholder="Share trade references or additional context to help expedite approval."
+                  />
+                </div>
+              </div>
 
-                    <div>
-                      <label htmlFor="newEmail" className="block text-sm font-medium text-gray-700 mb-1">
-                        Company Email <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        id="newEmail"
-                        type="email"
-                        value={companyEmail}
-                        onChange={(e) => setCompanyEmail(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="company@example.com"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="newPhone" className="block text-sm font-medium text-gray-700 mb-1">
-                      <Phone className="w-4 h-4 inline mr-1" />
-                      Phone Number
-                    </label>
-                    <input
-                      id="newPhone"
-                      type="tel"
-                      value={companyPhone}
-                      onChange={(e) => setCompanyPhone(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="(555) 123-4567"
-                    />
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <MapPin className="w-6 h-6 text-blue-600" />
-                      <h3 className="text-lg font-bold text-gray-800">Billing Address</h3>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Contact Name <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.name}
-                            onChange={(e) => updateBillingAddress('name', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="John Doe"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Company
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.company}
-                            onChange={(e) => updateBillingAddress('company', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Company Name"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Address Line 1 <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={billingAddress.address1}
-                          onChange={(e) => updateBillingAddress('address1', e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="123 Main Street"
-                          required
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Address Line 2
-                        </label>
-                        <input
-                          type="text"
-                          value={billingAddress.address2}
-                          onChange={(e) => updateBillingAddress('address2', e.target.value)}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="Apt, Suite, Unit, Building (optional)"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="col-span-2">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            City <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.city}
-                            onChange={(e) => updateBillingAddress('city', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="City"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            State <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.state}
-                            onChange={(e) => updateBillingAddress('state', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="CA"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            ZIP <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.zip}
-                            onChange={(e) => updateBillingAddress('zip', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="12345"
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Country
-                          </label>
-                          <input
-                            type="text"
-                            value={billingAddress.country}
-                            onChange={(e) => updateBillingAddress('country', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="US"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Phone
-                          </label>
-                          <input
-                            type="tel"
-                            value={billingAddress.phone}
-                            onChange={(e) => updateBillingAddress('phone', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="(555) 123-4567"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <MapPin className="w-6 h-6 text-blue-600" />
-                      <h3 className="text-lg font-bold text-gray-800">Shipping Address</h3>
-                    </div>
-
-                    <div className="mb-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sameAsBilling}
-                          onChange={(e) => setSameAsBilling(e.target.checked)}
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">Same as billing address</span>
-                      </label>
-                    </div>
-
-                    {!sameAsBilling && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Contact Name <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.name}
-                              onChange={(e) => updateShippingAddress('name', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="John Doe"
-                              required
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Company
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.company}
-                              onChange={(e) => updateShippingAddress('company', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="Company Name"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Address Line 1 <span className="text-red-500">*</span>
-                          </label>
-                          <input
-                            type="text"
-                            value={shippingAddress.address1}
-                            onChange={(e) => updateShippingAddress('address1', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="123 Main Street"
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Address Line 2
-                          </label>
-                          <input
-                            type="text"
-                            value={shippingAddress.address2}
-                            onChange={(e) => updateShippingAddress('address2', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Apt, Suite, Unit, Building (optional)"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              City <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.city}
-                              onChange={(e) => updateShippingAddress('city', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="City"
-                              required
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              State <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.state}
-                              onChange={(e) => updateShippingAddress('state', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="CA"
-                              required
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              ZIP <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.zip}
-                              onChange={(e) => updateShippingAddress('zip', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="12345"
-                              required
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Country
-                            </label>
-                            <input
-                              type="text"
-                              value={shippingAddress.country}
-                              onChange={(e) => updateShippingAddress('country', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="US"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Phone
-                            </label>
-                            <input
-                              type="tel"
-                              value={shippingAddress.phone}
-                              onChange={(e) => updateShippingAddress('phone', e.target.value)}
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="(555) 123-4567"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="submit"
+                  disabled={submittingNetTerms}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+                >
+                  {submittingNetTerms ? 'Submitting…' : derivedNetTermsStatus === 'pending' ? 'Update Application' : 'Apply for NET Terms'}
+                </button>
+                {derivedNetTermsStatus === 'pending' && (
                   <button
-                    type="submit"
-                    disabled={creatingCompany}
-                    className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    type="button"
+                    onClick={handleWithdrawApplication}
+                    disabled={submittingNetTerms}
+                    className="text-sm font-semibold text-gray-600 hover:text-gray-800"
                   >
-                    <Save className="w-5 h-5" />
-                    {creatingCompany ? 'Creating...' : 'Create Company Profile'}
+                    Withdraw Application
                   </button>
-                </div>
+                )}
               </div>
             </form>
           )}
+        </div>
+      )}
+
+      {loading && (
+        <div className="fixed inset-0 bg-black bg-opacity-10 flex items-center justify-center">
+          <div className="bg-white px-6 py-4 rounded-lg shadow flex items-center gap-3 text-gray-700">
+            <Clock className="w-5 h-5 animate-spin" />
+            Loading account details…
+          </div>
         </div>
       )}
     </div>
