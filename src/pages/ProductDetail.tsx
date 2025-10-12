@@ -3,12 +3,11 @@ import { ShoppingCart, Download, FileText, ExternalLink } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useCart } from '../contexts/CartContext';
 import type { Database } from '../lib/database.types';
+import { getHeroImage, normalizeMedia } from '../utils/productMedia';
 
 type ProductRow = Database['public']['Tables']['products']['Row'];
 type BrandRow = Database['public']['Tables']['brands']['Row'];
 type Brand = Pick<BrandRow, 'name' | 'slug'>;
-type ProductMedia = { MediaType?: string | null; URL?: string | null; [key: string]: any };
-
 type Attribute = {
   label: string;
   value: unknown;
@@ -73,44 +72,6 @@ const getDisplayValue = (attribute: Attribute): string | null => {
   if (typeof attribute.value === 'boolean') {
     return attribute.value ? 'Yes' : 'No';
   }
-
-  return null;
-};
-
-const normalizeMedia = (media: ProductRow['product_media']): ProductMedia[] => {
-  if (!media || !Array.isArray(media)) return [];
-  return media
-    .filter((item): item is ProductMedia => !!item && typeof item === 'object')
-    .map(item => item as ProductMedia);
-};
-
-const normalizeImages = (images: ProductRow['images']): string[] => {
-  if (!images || !Array.isArray(images)) return [];
-  return images.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-};
-
-const getHeroImage = (product: ProductRow, mediaList: ProductMedia[]): string | null => {
-  for (const media of mediaList) {
-    const type = normalizeString(media.MediaType)?.toLowerCase();
-    const url = normalizeString(media.URL);
-    if (url && type && type.includes('image')) {
-      return url;
-    }
-  }
-
-  for (const media of mediaList) {
-    const url = normalizeString(media.URL);
-    if (url) return url;
-  }
-
-  const fallbackFields = [product.item_image_url, product.product_family_image_url];
-  for (const candidate of fallbackFields) {
-    const normalized = normalizeString(candidate);
-    if (normalized) return normalized;
-  }
-
-  const imageArray = normalizeImages(product.images);
-  if (imageArray.length > 0) return imageArray[0];
 
   return null;
 };
