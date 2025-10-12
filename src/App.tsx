@@ -3,6 +3,7 @@ import { CartProvider } from './contexts/CartContext';
 import Layout from './components/Layout';
 import { Router } from './utils/router';
 import { useEffect, useState } from 'react';
+import { NavigationProvider } from './contexts/NavigationContext';
 
 function App() {
   const [mounted, setMounted] = useState(false);
@@ -25,9 +26,11 @@ function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <Layout>
-          <Router />
-        </Layout>
+        <NavigationProvider>
+          <Layout>
+            <Router />
+          </Layout>
+        </NavigationProvider>
       </CartProvider>
     </AuthProvider>
   );
