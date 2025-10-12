@@ -134,7 +134,7 @@ export default function Checkout() {
         throw new Error('Please provide a valid email address');
       }
 
-      if (user && !profile?.auth_user_id) {
+      if (user && (!profile?.id || !profile?.auth_user_id)) {
         throw new Error('User profile not loaded. Please refresh the page and try again.');
       }
 
