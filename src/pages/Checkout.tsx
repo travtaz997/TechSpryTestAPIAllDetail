@@ -1,12 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { supabase } from '../lib/supabase';
-import { CreditCard, Building2, Package, AlertCircle, Truck, MapPin } from 'lucide-react';
+import {
+  CreditCard,
+  Building2,
+  Package,
+  AlertCircle,
+  Truck,
+  MapPin,
+  ArrowLeft,
+} from 'lucide-react';
 import StripePayment from '../components/StripePayment';
 
 type AuthContextValue = ReturnType<typeof useAuth>;
 type UserProfileRecord = NonNullable<AuthContextValue['profile']>;
+
+type CheckoutStep = 'details' | 'payment';
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {
@@ -62,6 +72,11 @@ const shippingMethods = [
   { id: 'overnight', name: 'Overnight Shipping', cost: 50, days: '1 business day' },
 ];
 
+const checkoutSteps: { id: CheckoutStep; label: string; description: string }[] = [
+  { id: 'details', label: 'Details', description: 'Billing, shipping, and preferences' },
+  { id: 'payment', label: 'Payment', description: 'Securely complete your purchase' },
+];
+
 const PENDING_PAYMENT_STORAGE_KEY = 'checkout_pending_stripe_payment';
 
 interface PendingPaymentDetails {
@@ -70,9 +85,54 @@ interface PendingPaymentDetails {
   email?: string;
 }
 
+function StepProgress({ currentStep }: { currentStep: CheckoutStep }) {
+  return (
+    <div className="mb-10">
+      <nav aria-label="Checkout steps" className="max-w-3xl mx-auto">
+        <ol className="flex items-center justify-center gap-8 text-sm font-medium">
+          {checkoutSteps.map((step, index) => {
+            const isActive = step.id === currentStep;
+            const isCompleted = checkoutSteps.findIndex((s) => s.id === currentStep) > index;
+
+            return (
+              <li key={step.id} className="flex items-center gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border-2 text-base font-semibold transition ${
+                    isActive
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : isCompleted
+                      ? 'border-green-500 bg-green-50 text-green-600'
+                      : 'border-gray-300 bg-white text-gray-500'
+                  }`}
+                >
+                  {index + 1}
+                </div>
+                <div>
+                  <div
+                    className={`text-sm font-semibold ${
+                      isActive ? 'text-gray-900' : 'text-gray-500'
+                    }`}
+                  >
+                    {step.label}
+                  </div>
+                  <div className="text-xs text-gray-500">{step.description}</div>
+                </div>
+                {index < checkoutSteps.length - 1 && (
+                  <div className="h-px w-12 bg-gray-200" aria-hidden />
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+    </div>
+  );
+}
+
 export default function Checkout() {
   const { user, profile } = useAuth();
   const { items, total, clearCart } = useCart();
+
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -84,10 +144,20 @@ export default function Checkout() {
   const [sameAsBilling, setSameAsBilling] = useState(true);
   const [billingAddress, setBillingAddress] = useState<Address>(emptyAddress);
   const [shippingAddress, setShippingAddress] = useState<Address>(emptyAddress);
-  const [showPayment, setShowPayment] = useState(false);
-  const [tempOrderId, setTempOrderId] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
+  const [step, setStep] = useState<CheckoutStep>('details');
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [pendingPayment, setPendingPayment] = useState<PendingPaymentDetails | null>(null);
+
+  const selectedShipping = shippingMethods.find((m) => m.id === shippingMethod) || shippingMethods[0];
+  const subtotal = total;
+  const shippingCost = selectedShipping.cost;
+  const orderTotal = subtotal + shippingCost;
+
+  const paymentContactEmail = useMemo(() => {
+    const source = user?.email || pendingPayment?.email || guestEmail;
+    return source?.trim() || undefined;
+  }, [user, guestEmail, pendingPayment]);
 
   function persistPendingPayment(details: PendingPaymentDetails) {
     setPendingPayment(details);
@@ -125,6 +195,7 @@ export default function Checkout() {
     const stored = window.sessionStorage.getItem(PENDING_PAYMENT_STORAGE_KEY);
 
     if (!stored) {
+      setLoading(false);
       return;
     }
 
@@ -133,12 +204,13 @@ export default function Checkout() {
 
       if (!parsed || typeof parsed.orderId !== 'string' || typeof parsed.amount !== 'number') {
         window.sessionStorage.removeItem(PENDING_PAYMENT_STORAGE_KEY);
+        setLoading(false);
         return;
       }
 
       setPendingPayment(parsed);
-      setTempOrderId(parsed.orderId);
-      setShowPayment(true);
+      setActiveOrderId(parsed.orderId);
+      setStep('payment');
       setPaymentMethod('card');
 
       if (!user && parsed.email) {
@@ -147,6 +219,8 @@ export default function Checkout() {
     } catch (parseError) {
       console.warn('Failed to restore pending payment details', parseError);
       window.sessionStorage.removeItem(PENDING_PAYMENT_STORAGE_KEY);
+    } finally {
+      setLoading(false);
     }
   }, [user]);
 
@@ -175,6 +249,64 @@ export default function Checkout() {
 
     return data as UserProfileRecord;
   }
+
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      setBillingAddress({ ...emptyAddress, name: guestEmail || '' });
+      setShippingAddress({ ...emptyAddress, name: guestEmail || '' });
+      return;
+    }
+
+    async function loadCustomer() {
+      try {
+        setLoading(true);
+        const customerId = profile?.customer_id;
+
+        if (!customerId) {
+          setCustomer(null);
+          if (user.email) {
+            setBillingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+            setShippingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+          }
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('id', customerId)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        const customerRecord = (data ?? null) as Customer | null;
+        setCustomer(customerRecord);
+
+        if (customerRecord?.billing_address && Object.keys(customerRecord.billing_address).length > 0) {
+          setBillingAddress({ ...emptyAddress, ...customerRecord.billing_address });
+        } else if (user.email) {
+          setBillingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+        }
+
+        if (customerRecord?.shipping_address && Object.keys(customerRecord.shipping_address).length > 0) {
+          setShippingAddress({ ...emptyAddress, ...customerRecord.shipping_address });
+          setSameAsBilling(false);
+        } else if (user.email) {
+          setShippingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+        }
+      } catch (err) {
+        console.error('Failed to load customer details:', err);
+        setError(getErrorMessage(err, 'Failed to load customer details'));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadCustomer();
+  }, [user, profile, guestEmail]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -211,6 +343,7 @@ export default function Checkout() {
 
       if (redirectError) {
         setError(redirectError);
+        setStep('payment');
       }
 
       setProcessing(false);
@@ -218,8 +351,8 @@ export default function Checkout() {
       setPaymentMethod('card');
 
       if (pendingPayment) {
-        setTempOrderId(pendingPayment.orderId);
-        setShowPayment(true);
+        setActiveOrderId(pendingPayment.orderId);
+        setStep('payment');
       }
 
       window.history.replaceState({}, '', '/checkout');
@@ -232,198 +365,68 @@ export default function Checkout() {
   }, [pendingPayment]);
 
   useEffect(() => {
-    if (user && profile?.customer_id) {
-      loadCustomer();
-    } else {
-      setLoading(false);
+    if (!activeOrderId || step !== 'payment') {
+      return;
+    }
 
-      if (user) {
-        setBillingAddress({ ...emptyAddress, name: user.email || '' });
-        setShippingAddress({ ...emptyAddress, name: user.email || '' });
+    const billingIncomplete = !billingAddress.address1 || !billingAddress.city || !billingAddress.state || !billingAddress.zip;
+    const shippingIncomplete = sameAsBilling
+      ? false
+      : !shippingAddress.address1 || !shippingAddress.city || !shippingAddress.state || !shippingAddress.zip;
+
+    if (!billingIncomplete && !shippingIncomplete) {
+      return;
+    }
+
+    async function hydrateOrderDetails() {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('billing_address, shipping_address, shipping_method')
+          .eq('id', activeOrderId)
+          .maybeSingle();
+
+        if (error || !data) {
+          if (error) {
+            console.warn('Failed to hydrate checkout order', error);
+          }
+          return;
+        }
+
+        if (data.billing_address) {
+          setBillingAddress({ ...emptyAddress, ...data.billing_address });
+        }
+
+        if (data.shipping_address) {
+          setShippingAddress({ ...emptyAddress, ...data.shipping_address });
+
+          const fields: (keyof Address)[] = ['name', 'company', 'address1', 'address2', 'city', 'state', 'zip', 'country', 'phone'];
+          const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+
+          const sameAddress = fields.every((field) =>
+            normalize((data.billing_address ?? {})[field]) === normalize((data.shipping_address ?? {})[field])
+          );
+
+          setSameAsBilling(sameAddress);
+        }
+
+        if (typeof data.shipping_method === 'string') {
+          setShippingMethod(data.shipping_method);
+        }
+      } catch (err) {
+        console.warn('Failed to hydrate checkout order', err);
       }
     }
-  }, [user, profile]);
 
-  async function loadCustomer() {
-    try {
-      const customerId = profile?.customer_id;
+    hydrateOrderDetails();
+  }, [activeOrderId, step]);
 
-      if (!customerId) {
-        setCustomer(null);
-        setLoading(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('id', customerId)
-        .maybeSingle();
-
-      if (error) throw error;
-      const customerRecord = (data ?? null) as Customer | null;
-      setCustomer(customerRecord);
-
-      if (customerRecord?.billing_address && Object.keys(customerRecord.billing_address).length > 0) {
-        setBillingAddress({ ...emptyAddress, ...customerRecord.billing_address });
-      }
-
-      if (customerRecord?.shipping_address && Object.keys(customerRecord.shipping_address).length > 0) {
-        setShippingAddress({ ...emptyAddress, ...customerRecord.shipping_address });
-        setSameAsBilling(false);
-      }
-    } catch (err) {
-      console.error('Failed to load customer details:', err);
-      setError(getErrorMessage(err, 'Failed to load customer details'));
-    } finally {
-      setLoading(false);
-    }
+  function updateBillingAddress(field: keyof Address, value: string) {
+    setBillingAddress({ ...billingAddress, [field]: value });
   }
 
-  const selectedShipping = shippingMethods.find(m => m.id === shippingMethod) || shippingMethods[0];
-  const subtotal = total;
-  const shippingCost = selectedShipping.cost;
-  const orderTotal = subtotal + shippingCost;
-  const activeOrderId = pendingPayment?.orderId || tempOrderId;
-  const paymentAmount = pendingPayment?.amount ?? orderTotal;
-  const paymentContactEmailSource = user?.email || pendingPayment?.email || guestEmail;
-  const paymentContactEmail = paymentContactEmailSource ? paymentContactEmailSource.trim() : undefined;
-
-  async function handleCheckout(e: React.FormEvent) {
-    e.preventDefault();
-    setProcessing(true);
-    setError('');
-
-    const normalizedGuestEmail = guestEmail.trim();
-
-    try {
-      if (items.length === 0) {
-        throw new Error('Cart is empty');
-      }
-
-      if (!user && !normalizedGuestEmail) {
-        throw new Error('Please provide an email address');
-      }
-
-      if (!user && normalizedGuestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedGuestEmail)) {
-        throw new Error('Please provide a valid email address');
-      }
-
-      if (!billingAddress.name || !billingAddress.address1 || !billingAddress.city ||
-          !billingAddress.state || !billingAddress.zip) {
-        throw new Error('Please complete all required billing address fields');
-      }
-
-      const finalShippingAddress = sameAsBilling ? billingAddress : shippingAddress;
-
-      if (!sameAsBilling && (!finalShippingAddress.name || !finalShippingAddress.address1 ||
-          !finalShippingAddress.city || !finalShippingAddress.state || !finalShippingAddress.zip)) {
-        throw new Error('Please complete all required shipping address fields');
-      }
-
-      const activeProfile = user ? await resolveActiveProfile() : null;
-
-      if (paymentMethod === 'terms' && !customer?.terms_allowed) {
-        throw new Error('Net payment terms are not available for your account');
-      }
-
-      if (paymentMethod === 'terms' && !activeProfile?.customer_id) {
-        throw new Error('Payment terms require a linked customer account. Please contact support.');
-      }
-
-      const orderData: Record<string, unknown> = {
-        customer_id: activeProfile?.customer_id ?? profile?.customer_id ?? null,
-        status: paymentMethod === 'card' ? 'Pending' : 'Pending',
-        currency: 'USD',
-        total: orderTotal,
-        shipping_cost: shippingCost,
-        shipping_method: shippingMethod,
-        billing_address: billingAddress,
-        shipping_address: finalShippingAddress,
-        po_number: poNumber || null,
-        notes: orderNotes || null,
-        placed_at: new Date().toISOString(),
-        payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
-      };
-
-      if (user) {
-        if (!activeProfile?.id) {
-          throw new Error('Unable to determine your user profile. Please sign out and try again.');
-        }
-
-        orderData.created_by = activeProfile.id;
-      }
-
-      if (!user && normalizedGuestEmail) {
-        orderData.notes = orderData.notes
-          ? `${orderData.notes}\n\nGuest Email: ${normalizedGuestEmail}`
-          : `Guest Email: ${normalizedGuestEmail}`;
-      }
-
-      const { data: order, error: orderError } = await supabase
-        .from('orders')
-        .insert(orderData)
-        .select()
-        .single();
-
-      if (orderError) {
-        throw new Error(getErrorMessage(orderError, 'Failed to create order.'));
-      }
-
-      if (!order) {
-        throw new Error('Failed to create order. Please try again.');
-      }
-
-      const createdOrderId = typeof order.id === 'string' ? order.id : '';
-
-      if (!createdOrderId) {
-        throw new Error('Failed to create order. Please try again.');
-      }
-
-      const orderLines = items.map((item) => ({
-        order_id: createdOrderId,
-        product_id: item.productId,
-        sku: item.sku,
-        qty: item.quantity,
-        unit_price: item.price,
-        currency: 'USD',
-      }));
-
-      const { error: linesError } = await supabase
-        .from('order_lines')
-        .insert(orderLines);
-
-      if (linesError) {
-        throw new Error(getErrorMessage(linesError, 'Failed to save order items.'));
-      }
-
-      if (paymentMethod === 'card') {
-        setTempOrderId(createdOrderId);
-        setShowPayment(true);
-        persistPendingPayment({
-          orderId: createdOrderId,
-          amount: orderTotal,
-          email: user?.email || normalizedGuestEmail || undefined,
-        });
-      } else {
-        const { error: statusError } = await supabase
-          .from('orders')
-          .update({ status: 'Confirmed', payment_status: 'terms' })
-          .eq('id', createdOrderId);
-
-        if (statusError) {
-          throw new Error(getErrorMessage(statusError, 'Failed to confirm order.'));
-        }
-
-        clearCart();
-        redirectToConfirmation(createdOrderId, 'terms');
-      }
-    } catch (err) {
-      console.error('Checkout error:', err);
-      setError(getErrorMessage(err, 'Failed to process order'));
-    } finally {
-      setProcessing(false);
-    }
+  function updateShippingAddress(field: keyof Address, value: string) {
+    setShippingAddress({ ...shippingAddress, [field]: value });
   }
 
   function redirectToConfirmation(orderId: string, method: 'card' | 'terms') {
@@ -474,8 +477,6 @@ export default function Checkout() {
         throw new Error('Payment succeeded but we could not locate the related order. Please contact support.');
       }
 
-      setShowPayment(false);
-      setTempOrderId('');
       clearPendingPaymentStorage();
       clearCart();
       return data.orderId as string;
@@ -512,113 +513,250 @@ export default function Checkout() {
     setError(errorMessage);
   }
 
-  function updateBillingAddress(field: keyof Address, value: string) {
-    setBillingAddress({ ...billingAddress, [field]: value });
+  async function upsertOrderRecords(orderId: string | null, orderData: Record<string, unknown>) {
+    if (orderId) {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update(orderData)
+        .eq('id', orderId);
+
+      if (updateError) {
+        throw new Error(getErrorMessage(updateError, 'Failed to update order.'));
+      }
+
+      const { error: deleteError } = await supabase
+        .from('order_lines')
+        .delete()
+        .eq('order_id', orderId);
+
+      if (deleteError) {
+        throw new Error(getErrorMessage(deleteError, 'Failed to refresh order items.'));
+      }
+
+      return orderId;
+    }
+
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert(orderData)
+      .select()
+      .single();
+
+    if (orderError) {
+      throw new Error(getErrorMessage(orderError, 'Failed to create order.'));
+    }
+
+    if (!order || typeof order.id !== 'string') {
+      throw new Error('Failed to create order. Please try again.');
+    }
+
+    return order.id as string;
   }
 
-  function updateShippingAddress(field: keyof Address, value: string) {
-    setShippingAddress({ ...shippingAddress, [field]: value });
+  async function handleDetailsSubmit(event: React.FormEvent) {
+    event.preventDefault();
+
+    if (items.length === 0) {
+      setError('Your cart is empty.');
+      return;
+    }
+
+    setProcessing(true);
+    setError('');
+
+    const normalizedGuestEmail = guestEmail.trim();
+
+    try {
+      if (!user && !normalizedGuestEmail) {
+        throw new Error('Please provide an email address.');
+      }
+
+      if (!user && normalizedGuestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedGuestEmail)) {
+        throw new Error('Please provide a valid email address.');
+      }
+
+      if (!billingAddress.name || !billingAddress.address1 || !billingAddress.city || !billingAddress.state || !billingAddress.zip) {
+        throw new Error('Please complete all required billing address fields.');
+      }
+
+      const finalShippingAddress = sameAsBilling ? billingAddress : shippingAddress;
+
+      if (
+        !sameAsBilling &&
+        (!finalShippingAddress.name || !finalShippingAddress.address1 || !finalShippingAddress.city || !finalShippingAddress.state || !finalShippingAddress.zip)
+      ) {
+        throw new Error('Please complete all required shipping address fields.');
+      }
+
+      const activeProfile = user ? await resolveActiveProfile() : null;
+
+      if (paymentMethod === 'terms' && !customer?.terms_allowed) {
+        throw new Error('Net payment terms are not available for your account.');
+      }
+
+      if (paymentMethod === 'terms' && !activeProfile?.customer_id) {
+        throw new Error('Payment terms require a linked customer account. Please contact support.');
+      }
+
+      const orderData: Record<string, unknown> = {
+        customer_id: activeProfile?.customer_id ?? profile?.customer_id ?? null,
+        status: 'Pending',
+        currency: 'USD',
+        total: orderTotal,
+        shipping_cost: shippingCost,
+        shipping_method: shippingMethod,
+        billing_address: billingAddress,
+        shipping_address: finalShippingAddress,
+        po_number: poNumber || null,
+        notes: orderNotes || null,
+        placed_at: new Date().toISOString(),
+        payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
+      };
+
+      if (user) {
+        const activeProfileRecord = activeProfile ?? (await resolveActiveProfile());
+        if (!activeProfileRecord?.id) {
+          throw new Error('Unable to determine your user profile. Please sign out and try again.');
+        }
+        orderData.created_by = activeProfileRecord.id;
+      }
+
+      if (!user && normalizedGuestEmail) {
+        orderData.notes = orderData.notes
+          ? `${orderData.notes}\n\nGuest Email: ${normalizedGuestEmail}`
+          : `Guest Email: ${normalizedGuestEmail}`;
+      }
+
+      const orderId = await upsertOrderRecords(activeOrderId, orderData);
+
+      const orderLines = items.map((item) => ({
+        order_id: orderId,
+        product_id: item.productId,
+        sku: item.sku,
+        qty: item.quantity,
+        unit_price: item.price,
+        currency: 'USD',
+      }));
+
+      const { error: linesError } = await supabase
+        .from('order_lines')
+        .insert(orderLines);
+
+      if (linesError) {
+        throw new Error(getErrorMessage(linesError, 'Failed to save order items.'));
+      }
+
+      setActiveOrderId(orderId);
+
+      if (paymentMethod === 'terms') {
+        const { error: statusError } = await supabase
+          .from('orders')
+          .update({ status: 'Confirmed', payment_status: 'terms' })
+          .eq('id', orderId);
+
+        if (statusError) {
+          throw new Error(getErrorMessage(statusError, 'Failed to confirm order.'));
+        }
+
+        clearCart();
+        clearPendingPaymentStorage();
+        redirectToConfirmation(orderId, 'terms');
+        return;
+      }
+
+      persistPendingPayment({
+        orderId,
+        amount: orderTotal,
+        email: user?.email || normalizedGuestEmail || undefined,
+      });
+
+      setStep('payment');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      console.error('Checkout details error:', err);
+      setError(getErrorMessage(err, 'Failed to process order details.'));
+    } finally {
+      setProcessing(false);
+    }
   }
 
+  function handleBackToDetails() {
+    setStep('details');
+  }
 
-  if (items.length === 0 && !showPayment) {
+  const detailsButtonLabel = paymentMethod === 'card'
+    ? `Continue to Payment - $${orderTotal.toFixed(2)}`
+    : 'Place Order with Terms';
+
+  if (items.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="text-center">
-          <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h1 className="text-3xl font-bold text-gray-800 mb-4">Your Cart is Empty</h1>
-          <p className="text-gray-600 mb-6">Add items to your cart before checking out.</p>
-          <a
-            href="/catalog"
-            className="inline-block bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold"
-          >
-            Browse Catalog
-          </a>
-        </div>
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
+        <Package className="h-16 w-16 text-gray-300 mx-auto mb-4" />
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">Your cart is currently empty</h1>
+        <p className="text-gray-600 mb-6">Add some products to begin the checkout process.</p>
+        <a
+          href="/catalog"
+          className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+        >
+          Browse Products
+        </a>
       </div>
     );
   }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <h1 className="text-3xl font-bold text-gray-800 mb-8">Checkout</h1>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900">Checkout</h1>
+        <p className="mt-2 text-gray-600">Complete your order securely in just a couple of steps.</p>
+      </div>
+
+      <StepProgress currentStep={step} />
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-start gap-2">
-          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <span>{error}</span>
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold">We ran into a problem</p>
+              <p className="text-sm">{error}</p>
+            </div>
+          </div>
         </div>
       )}
 
-      <form onSubmit={handleCheckout}>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
+      {step === 'details' && (
+        <form onSubmit={handleDetailsSubmit} className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
             {!user && (
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <h2 className="text-xl font-bold text-gray-800 mb-4">Contact Information</h2>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email Address <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={guestEmail}
-                    onChange={(e) => setGuestEmail(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="your@email.com"
-                    required
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    We'll send your order confirmation to this email
-                  </p>
-                </div>
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-sm text-gray-600">
-                    Already have an account?{' '}
-                    <a href="/login" className="text-blue-600 hover:underline font-semibold">
-                      Sign in
-                    </a>
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {user && !profile?.customer_id && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <p className="text-sm text-yellow-800">
-                  <strong>Note:</strong> Your account is not yet linked to a company. You can still place orders, but payment terms may not be available.
-                </p>
-              </div>
-            )}
-
-            {customer && (
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="rounded-lg border border-gray-200 bg-white p-6">
                 <div className="flex items-center gap-3 mb-4">
-                  <Building2 className="w-6 h-6 text-blue-600" />
-                  <h2 className="text-xl font-bold text-gray-800">Company Information</h2>
+                  <Building2 className="h-6 w-6 text-blue-600" />
+                  <h2 className="text-xl font-bold text-gray-800">Contact Information</h2>
                 </div>
-                <div className="space-y-2 text-sm">
-                  <div>
-                    <span className="text-gray-600">Company:</span>{' '}
-                    <span className="font-semibold text-gray-800">{customer.company}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Email:</span>{' '}
-                    <span className="font-semibold text-gray-800">{customer.email}</span>
-                  </div>
-                </div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={guestEmail}
+                  onChange={(e) => setGuestEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             )}
 
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <MapPin className="w-6 h-6 text-blue-600" />
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <Building2 className="h-6 w-6 text-blue-600" />
                 <h2 className="text-xl font-bold text-gray-800">Billing Address</h2>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     Full Name <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -626,24 +764,22 @@ export default function Checkout() {
                     required
                     value={billingAddress.name}
                     onChange={(e) => updateBillingAddress('name', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Company Name
-                  </label>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">Company Name</label>
                   <input
                     type="text"
                     value={billingAddress.company}
                     onChange={(e) => updateBillingAddress('company', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     Address Line 1 <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -651,24 +787,22 @@ export default function Checkout() {
                     required
                     value={billingAddress.address1}
                     onChange={(e) => updateBillingAddress('address1', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Address Line 2
-                  </label>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">Address Line 2</label>
                   <input
                     type="text"
                     value={billingAddress.address2}
                     onChange={(e) => updateBillingAddress('address2', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     City <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -676,12 +810,12 @@ export default function Checkout() {
                     required
                     value={billingAddress.city}
                     onChange={(e) => updateBillingAddress('city', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     State <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -689,13 +823,13 @@ export default function Checkout() {
                     required
                     value={billingAddress.state}
                     onChange={(e) => updateBillingAddress('state', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="CA"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     ZIP Code <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -703,12 +837,12 @@ export default function Checkout() {
                     required
                     value={billingAddress.zip}
                     onChange={(e) => updateBillingAddress('zip', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
                     Phone <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -716,32 +850,32 @@ export default function Checkout() {
                     required
                     value={billingAddress.phone}
                     onChange={(e) => updateBillingAddress('phone', e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <Truck className="w-6 h-6 text-blue-600" />
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <MapPin className="h-6 w-6 text-blue-600" />
                 <h2 className="text-xl font-bold text-gray-800">Shipping Address</h2>
               </div>
 
-              <label className="flex items-center gap-2 mb-6 cursor-pointer">
+              <label className="mb-6 flex items-center gap-2 text-sm text-gray-700">
                 <input
                   type="checkbox"
                   checked={sameAsBilling}
                   onChange={(e) => setSameAsBilling(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                  className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-sm text-gray-700">Same as billing address</span>
+                Same as billing address
               </label>
 
               {!sameAsBilling && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       Full Name <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -749,24 +883,22 @@ export default function Checkout() {
                       required
                       value={shippingAddress.name}
                       onChange={(e) => updateShippingAddress('name', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Company Name
-                    </label>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">Company Name</label>
                     <input
                       type="text"
                       value={shippingAddress.company}
                       onChange={(e) => updateShippingAddress('company', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       Address Line 1 <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -774,24 +906,22 @@ export default function Checkout() {
                       required
                       value={shippingAddress.address1}
                       onChange={(e) => updateShippingAddress('address1', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Address Line 2
-                    </label>
+                    <label className="mb-2 block text-sm font-medium text-gray-700">Address Line 2</label>
                     <input
                       type="text"
                       value={shippingAddress.address2}
                       onChange={(e) => updateShippingAddress('address2', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       City <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -799,12 +929,12 @@ export default function Checkout() {
                       required
                       value={shippingAddress.city}
                       onChange={(e) => updateShippingAddress('city', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       State <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -812,13 +942,13 @@ export default function Checkout() {
                       required
                       value={shippingAddress.state}
                       onChange={(e) => updateShippingAddress('state', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="CA"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       ZIP Code <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -826,12 +956,12 @@ export default function Checkout() {
                       required
                       value={shippingAddress.zip}
                       onChange={(e) => updateShippingAddress('zip', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="mb-2 block text-sm font-medium text-gray-700">
                       Phone <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -839,16 +969,16 @@ export default function Checkout() {
                       required
                       value={shippingAddress.phone}
                       onChange={(e) => updateShippingAddress('phone', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <Truck className="w-6 h-6 text-blue-600" />
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <Truck className="h-6 w-6 text-blue-600" />
                 <h2 className="text-xl font-bold text-gray-800">Shipping Method</h2>
               </div>
 
@@ -856,7 +986,9 @@ export default function Checkout() {
                 {shippingMethods.map((method) => (
                   <label
                     key={method.id}
-                    className="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition"
+                    className={`flex cursor-pointer items-center justify-between rounded-lg border-2 p-4 transition ${
+                      shippingMethod === method.id ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <input
@@ -865,7 +997,7 @@ export default function Checkout() {
                         value={method.id}
                         checked={shippingMethod === method.id}
                         onChange={() => setShippingMethod(method.id)}
-                        className="w-4 h-4 text-blue-600"
+                        className="h-4 w-4 text-blue-600"
                       />
                       <div>
                         <div className="font-semibold text-gray-800">{method.name}</div>
@@ -880,14 +1012,18 @@ export default function Checkout() {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <CreditCard className="w-6 h-6 text-blue-600" />
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <CreditCard className="h-6 w-6 text-blue-600" />
                 <h2 className="text-xl font-bold text-gray-800">Payment Method</h2>
               </div>
 
               <div className="space-y-4">
-                <label className="flex items-start gap-3 p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition">
+                <label
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition ${
+                    paymentMethod === 'card' ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
                   <input
                     type="radio"
                     name="payment"
@@ -897,13 +1033,17 @@ export default function Checkout() {
                     className="mt-1"
                   />
                   <div className="flex-1">
-                    <div className="font-semibold text-gray-800 mb-1">Credit/Debit Card</div>
-                    <div className="text-sm text-gray-600">Pay securely with your card</div>
+                    <div className="font-semibold text-gray-800">Credit or Debit Card</div>
+                    <div className="text-sm text-gray-600">Pay securely today with Stripe.</div>
                   </div>
                 </label>
 
                 {customer?.terms_allowed && (
-                  <label className="flex items-start gap-3 p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition">
+                  <label
+                    className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition ${
+                      paymentMethod === 'terms' ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
                     <input
                       type="radio"
                       name="payment"
@@ -913,14 +1053,14 @@ export default function Checkout() {
                       className="mt-1"
                     />
                     <div className="flex-1">
-                      <div className="font-semibold text-gray-800 mb-1">Net Payment Terms</div>
-                      <div className="text-sm text-gray-600">Pay later according to your account terms</div>
+                      <div className="font-semibold text-gray-800">Invoice / Net Terms</div>
+                      <div className="text-sm text-gray-600">Place the order now and pay later using your account terms.</div>
                     </div>
                   </label>
                 )}
 
                 <div>
-                  <label htmlFor="poNumber" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="poNumber" className="mb-2 block text-sm font-medium text-gray-700">
                     PO Number (Optional)
                   </label>
                   <input
@@ -928,13 +1068,13 @@ export default function Checkout() {
                     type="text"
                     value={poNumber}
                     onChange={(e) => setPoNumber(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Enter your purchase order number"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor="orderNotes" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="orderNotes" className="mb-2 block text-sm font-medium text-gray-700">
                     Order Notes (Optional)
                   </label>
                   <textarea
@@ -942,39 +1082,23 @@ export default function Checkout() {
                     value={orderNotes}
                     onChange={(e) => setOrderNotes(e.target.value)}
                     rows={3}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Any special instructions for this order?"
+                    className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
             </div>
-
-            {showPayment && activeOrderId && (
-              <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <CreditCard className="w-6 h-6 text-blue-600" />
-                  <h2 className="text-xl font-bold text-gray-800">Complete Payment</h2>
-                </div>
-                <StripePayment
-                  amount={paymentAmount}
-                  orderId={activeOrderId}
-                  customerEmail={paymentContactEmail}
-                  onSuccess={handlePaymentSuccess}
-                  onError={handlePaymentError}
-                />
-              </div>
-            )}
           </div>
 
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg border border-gray-200 p-6 sticky top-6">
-              <h2 className="text-xl font-bold text-gray-800 mb-6">Order Summary</h2>
-              <div className="space-y-4 mb-6">
+          <aside className="lg:col-span-1">
+            <div className="sticky top-6 rounded-lg border border-gray-200 bg-white p-6">
+              <h2 className="text-xl font-bold text-gray-800">Order Summary</h2>
+              <div className="mt-6 space-y-4">
                 {items.map((item) => (
-                  <div key={item.productId} className="flex justify-between text-sm">
-                    <div className="flex-1">
+                  <div key={item.sku} className="flex items-start justify-between text-sm">
+                    <div className="flex-1 pr-4">
                       <div className="font-medium text-gray-800">{item.title}</div>
-                      <div className="text-gray-600">Qty: {item.quantity}</div>
+                      <div className="text-gray-500">Qty: {item.quantity}</div>
                     </div>
                     <div className="font-semibold text-gray-800">
                       ${(item.price * item.quantity).toFixed(2)}
@@ -982,32 +1106,118 @@ export default function Checkout() {
                   </div>
                 ))}
               </div>
-              <div className="border-t border-gray-200 pt-4 space-y-2">
-                <div className="flex justify-between text-sm text-gray-600">
+
+              <div className="mt-6 space-y-2 border-t border-gray-200 pt-4 text-sm text-gray-600">
+                <div className="flex justify-between">
                   <span>Subtotal</span>
                   <span>${subtotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-sm text-gray-600">
+                <div className="flex justify-between">
                   <span>Shipping ({selectedShipping.name})</span>
                   <span>{shippingCost === 0 ? 'Free' : `$${shippingCost.toFixed(2)}`}</span>
                 </div>
-                <div className="flex justify-between text-lg font-bold text-gray-800 pt-2 border-t border-gray-200">
-                  <span>Total</span>
-                  <span>${orderTotal.toFixed(2)}</span>
-                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4 text-lg font-semibold text-gray-900">
+                <span>Total Due</span>
+                <span>${orderTotal.toFixed(2)}</span>
               </div>
 
               <button
                 type="submit"
                 disabled={processing || loading}
-                className="w-full mt-6 bg-blue-600 text-white py-4 px-6 rounded-lg hover:bg-blue-700 transition font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed text-lg"
+                className="mt-6 w-full rounded-lg bg-blue-600 py-3 text-center text-lg font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
               >
-                {processing ? 'Processing...' : `Place Order - $${orderTotal.toFixed(2)}`}
+                {processing ? 'Processing...' : detailsButtonLabel}
+              </button>
+
+              <p className="mt-4 text-xs text-gray-500">
+                By continuing you agree to our terms of sale and privacy policy.
+              </p>
+            </div>
+          </aside>
+        </form>
+      )}
+
+      {step === 'payment' && activeOrderId && pendingPayment && (
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Secure Payment</h2>
+                <p className="text-gray-600">Enter your card details below to complete your purchase.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleBackToDetails}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Edit Details
               </button>
             </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white p-6">
+              <div className="mb-6 flex items-center gap-3">
+                <CreditCard className="h-6 w-6 text-blue-600" />
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-800">Pay with card</h3>
+                  <p className="text-sm text-gray-500">Transactions are encrypted and processed by Stripe.</p>
+                </div>
+              </div>
+
+              <StripePayment
+                amount={pendingPayment.amount}
+                orderId={activeOrderId}
+                customerEmail={paymentContactEmail}
+                onSuccess={handlePaymentSuccess}
+                onError={handlePaymentError}
+              />
+            </div>
           </div>
+
+          <aside className="lg:col-span-1">
+            <div className="sticky top-6 space-y-6">
+              <div className="rounded-lg border border-gray-200 bg-white p-6">
+                <h3 className="text-lg font-semibold text-gray-800">Order Summary</h3>
+                <div className="mt-4 space-y-3 text-sm text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Items</span>
+                    <span>${subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Shipping ({selectedShipping.name})</span>
+                    <span>{shippingCost === 0 ? 'Free' : `$${shippingCost.toFixed(2)}`}</span>
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4 text-lg font-semibold text-gray-900">
+                  <span>Total</span>
+                  <span>${orderTotal.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-600">
+                <h3 className="mb-3 text-sm font-semibold text-gray-800">Shipping to</h3>
+                <div className="space-y-1">
+                  <p>{(sameAsBilling ? billingAddress : shippingAddress).name}</p>
+                  <p>{(sameAsBilling ? billingAddress : shippingAddress).address1}</p>
+                  {((sameAsBilling ? billingAddress : shippingAddress).address2) && (
+                    <p>{(sameAsBilling ? billingAddress : shippingAddress).address2}</p>
+                  )}
+                  <p>
+                    {[sameAsBilling ? billingAddress.city : shippingAddress.city,
+                      sameAsBilling ? billingAddress.state : shippingAddress.state,
+                      sameAsBilling ? billingAddress.zip : shippingAddress.zip]
+                      .filter(Boolean)
+                      .join(', ')}
+                  </p>
+                  <p>{sameAsBilling ? billingAddress.phone : shippingAddress.phone}</p>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
-      </form>
+      )}
     </div>
   );
 }
