@@ -134,7 +134,7 @@ export default function Checkout() {
         throw new Error('Please provide a valid email address');
       }
 
-      if (user && !profile?.id) {
+      if (user && !profile?.auth_user_id) {
         throw new Error('User profile not loaded. Please refresh the page and try again.');
       }
 
@@ -173,8 +173,8 @@ export default function Checkout() {
         payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
       };
 
-      if (user && profile?.id) {
-        orderData.created_by = profile.id;
+      if (user && profile?.auth_user_id) {
+        orderData.created_by = profile.auth_user_id;
       }
 
       if (!user && guestEmail) {
