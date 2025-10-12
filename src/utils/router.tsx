@@ -9,6 +9,7 @@ import SeedData from '../pages/SeedData';
 import Orders from '../pages/Orders';
 import Account from '../pages/Account';
 import Checkout from '../pages/Checkout';
+import OrderConfirmation from '../pages/OrderConfirmation';
 import About from '../pages/About';
 import Contact from '../pages/Contact';
 import SeedAdmin from '../pages/admin/SeedAdmin';
@@ -38,6 +39,7 @@ const routes: Route[] = [
   { path: '/product/:sku', component: ProductDetail },
   { path: '/cart', component: Cart },
   { path: '/checkout', component: Checkout },
+  { path: '/order-confirmation/:orderId', component: OrderConfirmation },
   { path: '/orders', component: Orders },
   { path: '/account', component: Account },
   { path: '/about', component: About },
