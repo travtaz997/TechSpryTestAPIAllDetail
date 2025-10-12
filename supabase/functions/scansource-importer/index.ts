@@ -871,24 +871,80 @@ async function handlePublish(req: Request): Promise<Response> {
             ? supplierItem.stock_available
             : computedAvailability ?? null;
 
+        const categoryList = supplierItem.category_path
+          ? (supplierItem.category_path as string)
+              .split("//")
+              .map((segment) => segment.trim())
+              .filter((segment) => segment.length > 0)
+          : null;
+
+        const productMedia = Array.isArray(supplierItem.product_media) ? supplierItem.product_media : [];
+        const detailJson = supplierItem.detail_json && typeof supplierItem.detail_json === "object" ? supplierItem.detail_json : {};
+
         const { data: newProduct } = await svc
           .from("products")
           .insert({
             sku: supplierItem.item_number,
             title: supplierItem.description || supplierItem.title || supplierItem.item_number,
-            model: supplierItem.mfr_item_number,
+            manufacturer: supplierItem.manufacturer || null,
+            manufacturer_item_number: supplierItem.mfr_item_number || null,
+            model: supplierItem.mfr_item_number || null,
             short_desc:
               supplierItem.product_family_headline ||
               supplierItem.product_family_description ||
               supplierItem.item_description ||
               null,
-            categories: supplierItem.category_path ? [supplierItem.category_path] : null,
+            long_desc: supplierItem.item_description || supplierItem.description || null,
+            item_description: supplierItem.item_description || null,
+            product_family: supplierItem.product_family || null,
+            product_family_description: supplierItem.product_family_description || null,
+            product_family_headline:
+              supplierItem.product_family_headline ||
+              supplierItem.product_family_description ||
+              supplierItem.item_description ||
+              null,
+            product_family_image_url: supplierItem.product_family_image_url || null,
+            item_image_url: supplierItem.item_image_url || null,
+            catalog_name: supplierItem.catalog_name || null,
+            business_unit: supplierItem.business_unit || null,
+            category_path: supplierItem.category_path || null,
+            categories: categoryList,
             msrp,
             map_price: mapPrice,
+            item_status: supplierItem.item_status || null,
             stock_status: supplierItem.item_status || "Unknown",
+            plant_material_status_valid_from: supplierItem.plant_material_status_valid_from || null,
             stock_available: stockAvailable ?? 0,
+            rebox_item: typeof supplierItem.rebox_item === "boolean" ? supplierItem.rebox_item : null,
+            b_stock_item: typeof supplierItem.b_stock_item === "boolean" ? supplierItem.b_stock_item : null,
+            base_unit_of_measure: supplierItem.base_unit_of_measure || null,
+            general_item_category_group: supplierItem.general_item_category_group || null,
+            gross_weight: supplierItem.gross_weight ?? null,
+            weight: supplierItem.gross_weight ?? null,
+            material_group: supplierItem.material_group || null,
+            material_type: supplierItem.material_type || null,
+            battery_indicator: supplierItem.battery_indicator || null,
+            rohs_compliance_indicator: supplierItem.rohs_compliance_indicator || null,
+            manufacturer_division: supplierItem.manufacturer_division || null,
+            commodity_import_code_number: supplierItem.commodity_import_code_number || null,
             country_of_origin: supplierItem.country_of_origin || null,
-            weight: supplierItem.gross_weight || null,
+            unspsc: supplierItem.unspsc || null,
+            delivering_plant: supplierItem.delivering_plant || null,
+            material_freight_group: supplierItem.material_freight_group || null,
+            minimum_order_quantity: supplierItem.minimum_order_quantity ?? null,
+            salesperson_intervention_required:
+              typeof supplierItem.salesperson_intervention_required === "boolean"
+                ? supplierItem.salesperson_intervention_required
+                : null,
+            sell_via_edi: typeof supplierItem.sell_via_edi === "boolean" ? supplierItem.sell_via_edi : null,
+            sell_via_web: supplierItem.sell_via_web || null,
+            serial_number_profile: supplierItem.serial_number_profile || null,
+            packaged_length: supplierItem.packaged_length ?? null,
+            packaged_width: supplierItem.packaged_width ?? null,
+            packaged_height: supplierItem.packaged_height ?? null,
+            date_added: supplierItem.date_added || null,
+            product_media: productMedia,
+            detail_json: detailJson,
             published: true,
           })
           .select("id")
