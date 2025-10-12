@@ -173,8 +173,8 @@ export default function Checkout() {
         payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
       };
 
-      if (user && profile?.id) {
-        orderData.created_by = profile.id;
+      if (user && profile?.auth_user_id) {
+        orderData.created_by = profile.auth_user_id;
       }
 
       if (!user && guestEmail) {
