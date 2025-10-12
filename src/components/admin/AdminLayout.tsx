@@ -23,6 +23,7 @@ import {
   Menu,
   X,
   Download,
+  CreditCard,
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -43,6 +44,7 @@ const navigation: NavItem[] = [
   { name: 'Categories', path: '/admin/categories', icon: FolderTree },
   { name: 'Bundles', path: '/admin/bundles', icon: Grid3x3 },
   { name: 'Customers', path: '/admin/customers', icon: Users },
+  { name: 'Net Terms', path: '/admin/net-terms', icon: CreditCard },
   { name: 'Orders', path: '/admin/orders', icon: ShoppingCart },
   { name: 'Quotes', path: '/admin/quotes', icon: FileText },
   { name: 'Price Rules', path: '/admin/price-rules', icon: DollarSign },
