@@ -5,6 +5,24 @@ import { supabase } from '../lib/supabase';
 import { CreditCard, Building2, Package, CheckCircle, AlertCircle, Truck, MapPin } from 'lucide-react';
 import StripePayment from '../components/StripePayment';
 
+type AuthContextValue = ReturnType<typeof useAuth>;
+type UserProfileRecord = NonNullable<AuthContextValue['profile']>;
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
 interface Customer {
   id: string;
   company: string;
@@ -64,6 +82,32 @@ export default function Checkout() {
   const [tempOrderId, setTempOrderId] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
 
+  async function resolveActiveProfile(): Promise<UserProfileRecord | null> {
+    if (!user) {
+      return null;
+    }
+
+    if (profile?.id && profile.auth_user_id) {
+      return profile as UserProfileRecord;
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, auth_user_id, customer_id, role, email')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(getErrorMessage(error, 'Failed to load user profile.'));
+    }
+
+    if (!data) {
+      throw new Error('User profile not found. Please contact support.');
+    }
+
+    return data as UserProfileRecord;
+  }
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const paymentSuccess = urlParams.get('success');
@@ -87,25 +131,35 @@ export default function Checkout() {
 
   async function loadCustomer() {
     try {
+      const customerId = profile?.customer_id;
+
+      if (!customerId) {
+        setCustomer(null);
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('customers')
         .select('*')
-        .eq('id', profile?.customer_id)
+        .eq('id', customerId)
         .maybeSingle();
 
       if (error) throw error;
-      setCustomer(data);
+      const customerRecord = (data ?? null) as Customer | null;
+      setCustomer(customerRecord);
 
-      if (data?.billing_address && Object.keys(data.billing_address).length > 0) {
-        setBillingAddress({ ...emptyAddress, ...data.billing_address });
+      if (customerRecord?.billing_address && Object.keys(customerRecord.billing_address).length > 0) {
+        setBillingAddress({ ...emptyAddress, ...customerRecord.billing_address });
       }
 
-      if (data?.shipping_address && Object.keys(data.shipping_address).length > 0) {
-        setShippingAddress({ ...emptyAddress, ...data.shipping_address });
+      if (customerRecord?.shipping_address && Object.keys(customerRecord.shipping_address).length > 0) {
+        setShippingAddress({ ...emptyAddress, ...customerRecord.shipping_address });
         setSameAsBilling(false);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load customer details');
+      console.error('Failed to load customer details:', err);
+      setError(getErrorMessage(err, 'Failed to load customer details'));
     } finally {
       setLoading(false);
     }
@@ -134,10 +188,6 @@ export default function Checkout() {
         throw new Error('Please provide a valid email address');
       }
 
-      if (user && (!profile?.id || !profile?.auth_user_id)) {
-        throw new Error('User profile not loaded. Please refresh the page and try again.');
-      }
-
       if (!billingAddress.name || !billingAddress.address1 || !billingAddress.city ||
           !billingAddress.state || !billingAddress.zip) {
         throw new Error('Please complete all required billing address fields');
@@ -150,16 +200,18 @@ export default function Checkout() {
         throw new Error('Please complete all required shipping address fields');
       }
 
+      const activeProfile = user ? await resolveActiveProfile() : null;
+
       if (paymentMethod === 'terms' && !customer?.terms_allowed) {
         throw new Error('Net payment terms are not available for your account');
       }
 
-      if (paymentMethod === 'terms' && !profile?.customer_id) {
+      if (paymentMethod === 'terms' && !activeProfile?.customer_id) {
         throw new Error('Payment terms require a linked customer account. Please contact support.');
       }
 
-      const orderData: any = {
-        customer_id: profile?.customer_id || null,
+      const orderData: Record<string, unknown> = {
+        customer_id: activeProfile?.customer_id ?? profile?.customer_id ?? null,
         status: paymentMethod === 'card' ? 'Pending' : 'Pending',
         currency: 'USD',
         total: orderTotal,
@@ -173,8 +225,12 @@ export default function Checkout() {
         payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
       };
 
-      if (user && profile?.auth_user_id) {
-        orderData.created_by = profile.auth_user_id;
+      if (user) {
+        if (!activeProfile?.id) {
+          throw new Error('Unable to determine your user profile. Please sign out and try again.');
+        }
+
+        orderData.created_by = activeProfile.id;
       }
 
       if (!user && guestEmail) {
@@ -187,10 +243,22 @@ export default function Checkout() {
         .select()
         .single();
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        throw new Error(getErrorMessage(orderError, 'Failed to create order.'));
+      }
+
+      if (!order) {
+        throw new Error('Failed to create order. Please try again.');
+      }
+
+      const createdOrderId = typeof order.id === 'string' ? order.id : '';
+
+      if (!createdOrderId) {
+        throw new Error('Failed to create order. Please try again.');
+      }
 
       const orderLines = items.map((item) => ({
-        order_id: order.id,
+        order_id: createdOrderId,
         product_id: item.productId,
         sku: item.sku,
         qty: item.quantity,
@@ -202,25 +270,30 @@ export default function Checkout() {
         .from('order_lines')
         .insert(orderLines);
 
-      if (linesError) throw linesError;
+      if (linesError) {
+        throw new Error(getErrorMessage(linesError, 'Failed to save order items.'));
+      }
 
       if (paymentMethod === 'card') {
-        setTempOrderId(order.id);
+        setTempOrderId(createdOrderId);
         setShowPayment(true);
       } else {
         const { error: statusError } = await supabase
           .from('orders')
           .update({ status: 'Confirmed', payment_status: 'terms' })
-          .eq('id', order.id);
+          .eq('id', createdOrderId);
 
-        if (statusError) throw statusError;
+        if (statusError) {
+          throw new Error(getErrorMessage(statusError, 'Failed to confirm order.'));
+        }
 
-        setOrderId(order.id);
+        setOrderId(createdOrderId);
         setOrderComplete(true);
         clearCart();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to process order');
+      console.error('Checkout error:', err);
+      setError(getErrorMessage(err, 'Failed to process order'));
     } finally {
       setProcessing(false);
     }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import AdminLayout from '../../components/admin/AdminLayout';
-import { ShoppingCart, Search } from 'lucide-react';
 
 interface Order {
   id: string;

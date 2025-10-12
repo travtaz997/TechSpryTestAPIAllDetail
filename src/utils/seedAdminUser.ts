@@ -44,7 +44,7 @@ export async function seedAdminUser(): Promise<{ success: boolean; message: stri
       throw new Error('Failed to create auth user: no user returned');
     }
 
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    const { error: signInError } = await supabase.auth.signInWithPassword({
       email: adminEmail,
       password: adminPassword,
     });
