@@ -37,13 +37,7 @@ export default function Orders() {
     try {
       setLoading(true);
 
-      if (!profile?.customer_id) {
-        setOrders([]);
-        setLoading(false);
-        return;
-      }
-
-      const { data, error } = await supabase
+      let query = supabase
         .from('orders')
         .select(`
           id,
@@ -60,8 +54,17 @@ export default function Orders() {
             currency
           )
         `)
-        .eq('customer_id', profile.customer_id)
         .order('placed_at', { ascending: false });
+
+      if (profile?.customer_id && profile?.id) {
+        query = query.or(`customer_id.eq.${profile.customer_id},created_by.eq.${profile.id}`);
+      } else if (profile?.customer_id) {
+        query = query.eq('customer_id', profile.customer_id);
+      } else if (profile?.id) {
+        query = query.eq('created_by', profile.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setOrders(data || []);

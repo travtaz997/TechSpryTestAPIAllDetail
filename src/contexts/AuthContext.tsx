@@ -2,12 +2,44 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
+export type NetTermsStatus = 'not_requested' | 'pending' | 'approved' | 'declined';
+
+export interface NetTermsApplication {
+  legalBusinessName?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  billingAddress?: Record<string, unknown> | null;
+  shippingAddress?: Record<string, unknown> | null;
+  accountsPayableEmail?: string;
+  estimatedMonthlySpend?: string;
+  taxId?: string;
+  notes?: string;
+}
+
+export interface BusinessProfile {
+  jobTitle?: string;
+  website?: string;
+  taxId?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
 interface UserProfile {
   id: string;
   auth_user_id: string;
   customer_id: string | null;
   role: 'admin' | 'buyer' | 'viewer';
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  account_type?: 'business' | 'consumer' | null;
+  business_profile?: BusinessProfile | null;
+  net_terms_status?: NetTermsStatus | null;
+  net_terms_requested_at?: string | null;
+  net_terms_reviewed_at?: string | null;
+  net_terms_application?: NetTermsApplication | null;
+  net_terms_internal_notes?: string | null;
 }
 
 interface AuthContextType {
@@ -16,8 +48,12 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signUp: (
+    email: string,
+    password: string
+  ) => Promise<{ error: Error | null; data: { user: User | null } | null }>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -59,12 +95,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('users')
-        .select('*')
+        .select(
+          `
+            id,
+            auth_user_id,
+            customer_id,
+            role,
+            email,
+            first_name,
+            last_name,
+            phone,
+            account_type,
+            business_profile,
+            net_terms_status,
+            net_terms_requested_at,
+            net_terms_reviewed_at,
+            net_terms_application,
+            net_terms_internal_notes
+          `
+        )
         .eq('auth_user_id', authUserId)
         .maybeSingle();
 
       if (error) throw error;
-      setProfile(data);
+      setProfile(data as UserProfile | null);
     } catch (error) {
       console.error('Error loading user profile:', error);
       setProfile(null);
@@ -87,13 +141,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signUp(email: string, password: string) {
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
       });
-      return { error };
+      return { error, data };
     } catch (error) {
-      return { error: error as Error };
+      return { error: error as Error, data: null };
     }
   }
 
@@ -110,6 +164,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn,
     signUp,
     signOut,
+    refreshProfile: async () => {
+      if (!user) {
+        setProfile(null);
+        return;
+      }
+      await loadUserProfile(user.id);
+    },
   };
 
   if (loading) {
