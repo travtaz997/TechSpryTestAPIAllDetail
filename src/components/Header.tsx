@@ -71,6 +71,29 @@ export default function Header() {
 
   const closeMobileMenu = () => setMobileMenuOpen(false);
 
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = searchQuery.trim();
+    const params = new URLSearchParams();
+    if (trimmed) {
+      params.set('search', trimmed);
+    }
+
+    const nextUrl = `/catalog${params.toString() ? `?${params.toString()}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+    if (nextUrl !== currentUrl) {
+      window.location.href = nextUrl;
+    } else {
+      window.location.reload();
+    }
+
+    setMobileMenuOpen(false);
+    setCategoryMenuOpen(false);
+  };
+
+  const closeMobileMenu = () => setMobileMenuOpen(false);
+
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
       <div className="bg-slate-900 text-white text-sm">
