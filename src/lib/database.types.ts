@@ -88,6 +88,10 @@ export interface Database {
       specs: Json
       msrp: number
       map_price: number
+      reseller_price: number | null
+      sale_price: number | null
+      price_adjustment_type: 'fixed' | 'percent' | null
+      price_adjustment_value: number | null
       item_status: string | null
       stock_status: string
       stock_available: number | null
@@ -153,6 +157,10 @@ export interface Database {
       specs?: Json
       msrp?: number
       map_price?: number
+      reseller_price?: number | null
+      sale_price?: number | null
+      price_adjustment_type?: 'fixed' | 'percent' | null
+      price_adjustment_value?: number | null
       item_status?: string | null
       stock_status?: string
       stock_available?: number | null
@@ -218,6 +226,10 @@ export interface Database {
       specs?: Json
       msrp?: number
       map_price?: number
+      reseller_price?: number | null
+      sale_price?: number | null
+      price_adjustment_type?: 'fixed' | 'percent' | null
+      price_adjustment_value?: number | null
       item_status?: string | null
       stock_status?: string
       stock_available?: number | null

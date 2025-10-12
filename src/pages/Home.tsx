@@ -17,6 +17,8 @@ interface Product {
   images: string[];
   msrp: number;
   map_price: number;
+  sale_price: number | null;
+  reseller_price: number | null;
   brand_id: string;
 }
 
@@ -190,8 +192,10 @@ export default function Home() {
                   <p className="text-sm text-gray-600 mb-3 line-clamp-2">{product.short_desc}</p>
                   <div className="flex items-center justify-between mb-3">
                     <div>
-                      {product.map_price > 0 ? (
-                        <div className="text-lg font-bold text-gray-800">${product.map_price.toFixed(2)}</div>
+                      {(product.sale_price ?? product.map_price ?? 0) > 0 ? (
+                        <div className="text-lg font-bold text-gray-800">
+                          ${(product.sale_price ?? product.map_price ?? 0).toFixed(2)}
+                        </div>
                       ) : (
                         <div className="text-sm font-semibold text-blue-600">Call for price</div>
                       )}
@@ -200,7 +204,7 @@ export default function Home() {
                   <div className="flex gap-2">
                     <button className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition text-sm font-semibold flex items-center justify-center gap-2">
                       <ShoppingCart className="h-4 w-4" />
-                      Add to Cart
+                      {(product.sale_price ?? product.map_price ?? 0) > 0 ? 'Add to Cart' : 'Contact for Price'}
                     </button>
                   </div>
                 </div>

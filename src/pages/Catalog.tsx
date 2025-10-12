@@ -11,6 +11,8 @@ interface Product {
   images: string[];
   msrp: number;
   map_price: number;
+  sale_price: number | null;
+  reseller_price: number | null;
   brand_id: string;
   stock_status: string;
   tags: string[];
@@ -103,10 +105,12 @@ export default function Catalog() {
         let filtered = data;
 
         if (filters.minPrice) {
-          filtered = filtered.filter(p => p.map_price >= parseFloat(filters.minPrice));
+          const min = parseFloat(filters.minPrice);
+          filtered = filtered.filter(p => (p.sale_price ?? p.map_price ?? 0) >= min);
         }
         if (filters.maxPrice) {
-          filtered = filtered.filter(p => p.map_price <= parseFloat(filters.maxPrice));
+          const max = parseFloat(filters.maxPrice);
+          filtered = filtered.filter(p => (p.sale_price ?? p.map_price ?? 0) <= max);
         }
 
         console.log('Loaded products:', filtered.length, 'with filters:', filters);
@@ -129,7 +133,7 @@ export default function Catalog() {
       title: product.title,
       brand: brand?.name || '',
       image: '',
-      price: product.map_price,
+      price: product.sale_price ?? product.map_price,
     });
   }
 
@@ -232,8 +236,10 @@ export default function Catalog() {
                       </h3>
                       <p className="text-sm text-gray-600 mb-3 line-clamp-2">{product.short_desc}</p>
                       <div className="flex items-center justify-between mb-3">
-                        {product.map_price > 0 ? (
-                          <div className="text-lg font-bold text-gray-800">${product.map_price.toFixed(2)}</div>
+                        {(product.sale_price ?? product.map_price ?? 0) > 0 ? (
+                          <div className="text-lg font-bold text-gray-800">
+                            ${(product.sale_price ?? product.map_price ?? 0).toFixed(2)}
+                          </div>
                         ) : (
                           <div className="text-sm font-semibold text-blue-600">Call for price</div>
                         )}
@@ -250,11 +256,11 @@ export default function Catalog() {
                   <div className="px-4 pb-4">
                     <button
                       onClick={() => handleAddToCart(product)}
-                      disabled={product.map_price === 0}
+                      disabled={(product.sale_price ?? product.map_price ?? 0) === 0}
                       className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
                     >
                       <ShoppingCart className="h-4 w-4" />
-                      {product.map_price > 0 ? 'Add to Cart' : 'Contact for Price'}
+                      {(product.sale_price ?? product.map_price ?? 0) > 0 ? 'Add to Cart' : 'Contact for Price'}
                     </button>
                   </div>
                 </div>
