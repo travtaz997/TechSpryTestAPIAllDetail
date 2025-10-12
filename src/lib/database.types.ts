@@ -339,6 +339,21 @@ export interface Database {
           quote_ref: string
           placed_at: string
           created_by: string | null
+          shipping_address: Json
+          billing_address: Json
+          shipping_method: string
+          shipping_cost: number
+          notes: string
+          payment_status:
+            | 'pending'
+            | 'processing'
+            | 'requires_payment_method'
+            | 'requires_action'
+            | 'succeeded'
+            | 'canceled'
+            | 'terms'
+          stripe_payment_intent_id: string | null
+          paid_at: string | null
           created_at: string
           updated_at: string
         }
@@ -352,6 +367,21 @@ export interface Database {
           quote_ref?: string
           placed_at?: string
           created_by?: string | null
+          shipping_address?: Json
+          billing_address?: Json
+          shipping_method?: string
+          shipping_cost?: number
+          notes?: string
+          payment_status?:
+            | 'pending'
+            | 'processing'
+            | 'requires_payment_method'
+            | 'requires_action'
+            | 'succeeded'
+            | 'canceled'
+            | 'terms'
+          stripe_payment_intent_id?: string | null
+          paid_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -365,6 +395,21 @@ export interface Database {
           quote_ref?: string
           placed_at?: string
           created_by?: string | null
+          shipping_address?: Json
+          billing_address?: Json
+          shipping_method?: string
+          shipping_cost?: number
+          notes?: string
+          payment_status?:
+            | 'pending'
+            | 'processing'
+            | 'requires_payment_method'
+            | 'requires_action'
+            | 'succeeded'
+            | 'canceled'
+            | 'terms'
+          stripe_payment_intent_id?: string | null
+          paid_at?: string | null
           created_at?: string
           updated_at?: string
         }

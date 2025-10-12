@@ -9,7 +9,7 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
 interface PaymentFormProps {
   amount: number;
   orderId: string;
-  onSuccess: () => void;
+  onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
 }
 
@@ -39,7 +39,7 @@ function PaymentForm({ amount, orderId, onSuccess, onError }: PaymentFormProps) 
       if (error) {
         onError(error.message || 'Payment failed');
       } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-        onSuccess();
+        onSuccess(paymentIntent.id);
       } else {
         onError('Payment was not completed. Please try again.');
       }
@@ -67,11 +67,12 @@ function PaymentForm({ amount, orderId, onSuccess, onError }: PaymentFormProps) 
 interface StripePaymentProps {
   amount: number;
   orderId: string;
-  onSuccess: () => void;
+  customerEmail?: string;
+  onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
 }
 
-export default function StripePayment({ amount, orderId, onSuccess, onError }: StripePaymentProps) {
+export default function StripePayment({ amount, orderId, customerEmail, onSuccess, onError }: StripePaymentProps) {
   const [clientSecret, setClientSecret] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -87,19 +88,25 @@ export default function StripePayment({ amount, orderId, onSuccess, onError }: S
 
       const { data: { session } } = await supabase.auth.getSession();
 
-      if (!session) {
-        throw new Error('Not authenticated');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-payment`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ amount, orderId, currency: 'usd' }),
+          headers,
+          body: JSON.stringify({
+            action: 'create',
+            orderId,
+            currency: 'usd',
+            receiptEmail: customerEmail,
+          }),
         }
       );
 
@@ -109,6 +116,11 @@ export default function StripePayment({ amount, orderId, onSuccess, onError }: S
       }
 
       const data = await response.json();
+
+      if (!data.clientSecret) {
+        throw new Error('Payment processor did not return a client secret');
+      }
+
       setClientSecret(data.clientSecret);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to initialize payment';
