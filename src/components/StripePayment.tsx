@@ -8,12 +8,11 @@ const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
 
 interface PaymentFormProps {
   amount: number;
-  orderId: string;
   onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
 }
 
-function PaymentForm({ amount, orderId, onSuccess, onError }: PaymentFormProps) {
+function PaymentForm({ amount, onSuccess, onError }: PaymentFormProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -176,7 +175,6 @@ export default function StripePayment({ amount, orderId, customerEmail, onSucces
     <Elements stripe={stripePromise} options={options}>
       <PaymentForm
         amount={amount}
-        orderId={orderId}
         onSuccess={onSuccess}
         onError={onError}
       />
