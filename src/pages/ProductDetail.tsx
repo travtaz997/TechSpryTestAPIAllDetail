@@ -31,19 +31,6 @@ const formatNumberValue = (options?: Intl.NumberFormatOptions) => (value: unknow
   return null;
 };
 
-const formatBooleanValue = (value: unknown): string | null => {
-  if (typeof value !== 'boolean') return null;
-  return value ? 'Yes' : 'No';
-};
-
-const formatDateValue = (value: unknown): string | null => {
-  const normalized = normalizeString(value);
-  if (!normalized) return null;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return normalized;
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-};
-
 const formatCategoryPath = (value: unknown): string | null => {
   const normalized = normalizeString(value);
   if (!normalized) return null;
@@ -126,12 +113,6 @@ const getHeroImage = (product: ProductRow, mediaList: ProductMedia[]): string | 
   if (imageArray.length > 0) return imageArray[0];
 
   return null;
-};
-
-const formatJsonValue = (value: unknown): string => {
-  if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
 };
 
 export default function ProductDetail() {
@@ -239,36 +220,10 @@ export default function ProductDetail() {
       attributes: [
         { label: 'Manufacturer', value: manufacturerName || product.manufacturer },
         { label: 'Manufacturer Item #', value: product.manufacturer_item_number || product.model },
-        { label: 'Catalog', value: product.catalog_name },
-        { label: 'Business Unit', value: product.business_unit },
         { label: 'Category Path', value: product.category_path, formatter: formatCategoryPath },
         { label: 'Product Family', value: product.product_family },
-        { label: 'Family Headline', value: product.product_family_headline },
         { label: 'Family Description', value: product.product_family_description },
         { label: 'UNSPSC', value: product.unspsc },
-        { label: 'Commodity Code', value: product.commodity_import_code_number },
-        { label: 'Manufacturer Division', value: product.manufacturer_division },
-      ],
-    },
-    {
-      title: 'Availability & Selling Rules',
-      attributes: [
-        { label: 'Item Status', value: product.item_status || product.stock_status },
-        { label: 'Status Effective', value: product.plant_material_status_valid_from, formatter: formatDateValue },
-        { label: 'Date Added', value: product.date_added, formatter: formatDateValue },
-        { label: 'Stock Available', value: product.stock_available, formatter: formatNumberValue({ maximumFractionDigits: 0 }) },
-        { label: 'Minimum Order Quantity', value: product.minimum_order_quantity, formatter: formatNumberValue({ maximumFractionDigits: 0 }) },
-        { label: 'Base Unit of Measure', value: product.base_unit_of_measure },
-        { label: 'Serial Number Profile', value: product.serial_number_profile },
-        { label: 'Sell via Web', value: product.sell_via_web },
-        { label: 'Sell via EDI', value: product.sell_via_edi, formatter: formatBooleanValue },
-        {
-          label: 'Salesperson Intervention Required',
-          value: product.salesperson_intervention_required,
-          formatter: formatBooleanValue,
-        },
-        { label: 'Rebox Item', value: product.rebox_item, formatter: formatBooleanValue },
-        { label: 'B-Stock Item', value: product.b_stock_item, formatter: formatBooleanValue },
       ],
     },
     {
@@ -280,11 +235,6 @@ export default function ProductDetail() {
           value: [product.packaged_length, product.packaged_width, product.packaged_height],
           formatter: formatDimensions,
         },
-        { label: 'Material Freight Group', value: product.material_freight_group },
-        { label: 'Delivering Plant', value: product.delivering_plant },
-        { label: 'Material Group', value: product.material_group },
-        { label: 'Material Type', value: product.material_type },
-        { label: 'General Item Category', value: product.general_item_category_group },
         { label: 'Battery Indicator', value: product.battery_indicator },
         { label: 'RoHS Compliance', value: product.rohs_compliance_indicator },
         { label: 'Country of Origin', value: product.country_of_origin },
@@ -304,12 +254,6 @@ export default function ProductDetail() {
         .filter((attribute): attribute is Attribute & { display: string } => attribute !== null),
     }))
     .filter(section => section.attributes.length > 0);
-
-  const detailObject =
-    product.detail_json && typeof product.detail_json === 'object' && !Array.isArray(product.detail_json)
-      ? (product.detail_json as Record<string, any>)
-      : null;
-  const detailEntries = detailObject ? Object.entries(detailObject) : [];
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -502,9 +446,6 @@ export default function ProductDetail() {
           </div>
 
           <div className="text-sm text-gray-600 space-y-1">
-            <div>
-              <span className="font-semibold">SKU:</span> {product.sku}
-            </div>
             {product.model && (
               <div>
                 <span className="font-semibold">Model:</span> {product.model}
@@ -549,23 +490,6 @@ export default function ProductDetail() {
               </div>
             )}
 
-            {detailEntries.length > 0 && (
-              <div className="mt-10">
-                <h3 className="text-xl font-semibold text-gray-800 mb-3">Additional Supplier Attributes</h3>
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {detailEntries.map(([key, value], index) => (
-                        <tr key={key} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                          <td className="px-6 py-3 font-semibold text-gray-800 w-1/3 align-top">{key}</td>
-                          <td className="px-6 py-3 text-gray-600 whitespace-pre-wrap">{formatJsonValue(value)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
 
           <div>
