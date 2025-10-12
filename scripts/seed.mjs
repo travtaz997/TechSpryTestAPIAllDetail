@@ -1,0 +1,328 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = 'https://0ec90b57d6e95fcbda19832f.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJib2x0IiwicmVmIjoiMGVjOTBiNTdkNmU5NWZjYmRhMTk4MzJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4ODE1NzQsImV4cCI6MTc1ODg4MTU3NH0.9I8-U0x86Ak8t2DGaIk0HfvTSLsAyzdnz-Nw00mMkKw';
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('Missing Supabase environment variables');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+async function seedDatabase() {
+  console.log('Starting database seed...');
+
+  const brands = [
+    { name: 'Zebra', slug: 'zebra', blurb: 'Leader in barcode scanners and mobile computers', logo_url: '', links: {} },
+    { name: 'Honeywell', slug: 'honeywell', blurb: 'Enterprise-grade scanning and mobility solutions', logo_url: '', links: {} },
+    { name: 'Datalogic', slug: 'datalogic', blurb: 'Innovative automatic data capture solutions', logo_url: '', links: {} },
+    { name: 'Epson', slug: 'epson', blurb: 'Reliable receipt and label printing technology', logo_url: '', links: {} },
+    { name: 'Star Micronics', slug: 'star-micronics', blurb: 'Industry-leading POS printers', logo_url: '', links: {} },
+    { name: 'Ingenico', slug: 'ingenico', blurb: 'Secure payment terminal solutions', logo_url: '', links: {} },
+    { name: 'ID TECH', slug: 'id-tech', blurb: 'Innovative payment and identification solutions', logo_url: '', links: {} },
+    { name: 'HP', slug: 'hp', blurb: 'Enterprise computing and POS hardware', logo_url: '', links: {} },
+    { name: 'Elo', slug: 'elo', blurb: 'Commercial touchscreen displays', logo_url: '', links: {} },
+    { name: 'Socket Mobile', slug: 'socket-mobile', blurb: 'Mobile data capture solutions', logo_url: '', links: {} },
+    { name: 'SATO', slug: 'sato', blurb: 'Industrial printing and labeling', logo_url: '', links: {} },
+    { name: 'Seagull Scientific', slug: 'seagull-scientific', blurb: 'BarTender label design software', logo_url: '', links: {} },
+  ];
+
+  console.log('Inserting brands...');
+  const { data: insertedBrands, error: brandError } = await supabase
+    .from('brands')
+    .upsert(brands, { onConflict: 'slug' })
+    .select();
+
+  if (brandError) {
+    console.error('Error seeding brands:', brandError);
+    process.exit(1);
+  }
+
+  console.log(`✓ Created ${insertedBrands.length} brands`);
+
+  const brandMap = Object.fromEntries(
+    insertedBrands.map(b => [b.slug, b.id])
+  );
+
+  const products = [
+    {
+      sku: 'ZEB-DS2208',
+      title: 'Zebra DS2208 Handheld Barcode Scanner',
+      brand_id: brandMap['zebra'],
+      model: 'DS2208',
+      short_desc: '2D omnidirectional handheld scanner with superior scan performance',
+      long_desc: 'The Zebra DS2208 delivers superior scanning performance on virtually every 1D and 2D barcode. Affordable and versatile, it increases productivity for retail, healthcare, and light industrial applications.',
+      msrp: 399.00,
+      map_price: 349.00,
+      stock_status: 'In Stock',
+      categories: ['barcode-scanners'],
+      tags: ['2D', 'handheld', 'corded'],
+      images: [],
+      specs: {
+        'Scan Pattern': '2D Imager',
+        'Interface': 'USB',
+        'Dimensions': '6.6 x 3.5 x 2.6 in',
+        'Weight': '5.6 oz',
+      },
+      warranty: '3 years',
+    },
+    {
+      sku: 'ZEB-TC22',
+      title: 'Zebra TC22 Mobile Computer',
+      brand_id: brandMap['zebra'],
+      model: 'TC22',
+      short_desc: 'Professional-grade Android mobile computer for field workers',
+      long_desc: 'The TC22 brings professional-grade reliability, security, and features to everyday mobile computing. Perfect for retail associates, field service technicians, and delivery drivers.',
+      msrp: 1599.00,
+      map_price: 1449.00,
+      stock_status: 'In Stock',
+      lead_time_days: 5,
+      categories: ['mobile-computers'],
+      tags: ['Android', 'rugged', 'WiFi', 'Bluetooth'],
+      images: [],
+      specs: {
+        'Operating System': 'Android 11',
+        'Display': '6 inch FHD+',
+        'Scanner': 'SE4710 1D/2D',
+        'Battery': '4620 mAh',
+        'Drop Spec': '5 ft / 1.5 m',
+      },
+      warranty: '1 year',
+    },
+    {
+      sku: 'ZEB-ZT411',
+      title: 'Zebra ZT411 Industrial Printer',
+      brand_id: brandMap['zebra'],
+      model: 'ZT411',
+      short_desc: '4-inch industrial label printer with advanced connectivity',
+      long_desc: 'The ZT411 RFID industrial printer provides high-performance printing and encoding in a compact footprint. Ideal for manufacturing, warehousing, and logistics applications.',
+      msrp: 2499.00,
+      map_price: 0,
+      stock_status: 'In Stock',
+      categories: ['label-printers'],
+      tags: ['industrial', 'RFID', 'thermal'],
+      images: [],
+      specs: {
+        'Print Width': '4 inches',
+        'Resolution': '203 dpi',
+        'Print Speed': 'Up to 14 ips',
+        'Connectivity': 'USB, Serial, Ethernet',
+      },
+      warranty: '2 years',
+    },
+    {
+      sku: 'HON-1960',
+      title: 'Honeywell Xenon Ultra 1960 Scanner',
+      brand_id: brandMap['honeywell'],
+      model: 'Xenon Ultra 1960',
+      short_desc: 'Ultra-rugged cordless 2D scanner with extended range',
+      long_desc: 'The Xenon Ultra 1960 brings unparalleled performance and reliability to harsh environments. Features superior scanning technology and an IP65 rating for maximum durability.',
+      msrp: 599.00,
+      map_price: 529.00,
+      stock_status: 'In Stock',
+      categories: ['barcode-scanners'],
+      tags: ['2D', 'cordless', 'rugged', 'long-range'],
+      images: [],
+      specs: {
+        'Scan Pattern': '2D Imager',
+        'Range': 'Up to 50 ft',
+        'Battery': 'Up to 50,000 scans',
+        'IP Rating': 'IP65',
+      },
+      warranty: '3 years',
+    },
+    {
+      sku: 'HON-CT30',
+      title: 'Honeywell CT30 XP Mobile Computer',
+      brand_id: brandMap['honeywell'],
+      model: 'CT30 XP',
+      short_desc: 'Full-touch mobile computer for retail and field operations',
+      long_desc: 'The CT30 XP combines smartphone simplicity with enterprise-grade performance. Perfect for inventory management, price checks, and mobile POS applications.',
+      msrp: 1399.00,
+      map_price: 1249.00,
+      stock_status: 'In Stock',
+      categories: ['mobile-computers'],
+      tags: ['Android', 'touchscreen', 'WiFi'],
+      images: [],
+      specs: {
+        'Operating System': 'Android 10',
+        'Display': '4.0 inch',
+        'Scanner': 'N6803 FlexRange',
+        'Battery': '4040 mAh',
+      },
+      warranty: '1 year',
+    },
+    {
+      sku: 'DATA-GD4520',
+      title: 'Datalogic Gryphon GD4520 Scanner',
+      brand_id: brandMap['datalogic'],
+      model: 'Gryphon GD4520',
+      short_desc: 'General purpose 2D handheld scanner with white illumination',
+      long_desc: 'The Gryphon GD4520 delivers fast and reliable scanning performance. Features white illumination technology that is easier on the eyes during prolonged use.',
+      msrp: 329.00,
+      map_price: 289.00,
+      stock_status: 'In Stock',
+      categories: ['barcode-scanners'],
+      tags: ['2D', 'handheld', 'retail'],
+      images: [],
+      specs: {
+        'Scan Pattern': '2D Imager',
+        'Interface': 'USB, Keyboard Wedge',
+        'Read Range': 'Up to 19 inches',
+        'Illumination': 'White LED',
+      },
+      warranty: '3 years',
+    },
+    {
+      sku: 'EPS-TM88VII',
+      title: 'Epson TM-T88VII Receipt Printer',
+      brand_id: brandMap['epson'],
+      model: 'TM-T88VII',
+      short_desc: 'High-performance thermal receipt printer with enhanced connectivity',
+      long_desc: 'The TM-T88VII is the latest generation of Epson\'s industry-leading receipt printer family. Features fast printing, multiple connectivity options, and paper-saving technology.',
+      msrp: 599.00,
+      map_price: 529.00,
+      stock_status: 'In Stock',
+      categories: ['receipt-printers'],
+      tags: ['thermal', 'USB', 'Ethernet', 'retail'],
+      images: [],
+      specs: {
+        'Print Speed': 'Up to 500mm/sec',
+        'Paper Width': '80mm',
+        'Connectivity': 'USB, Ethernet, Bluetooth',
+        'Auto-Cutter': 'Yes',
+      },
+      warranty: '3 years',
+    },
+    {
+      sku: 'STAR-TSP143',
+      title: 'Star Micronics TSP143IIIBI Receipt Printer',
+      brand_id: brandMap['star-micronics'],
+      model: 'TSP143IIIBI',
+      short_desc: 'Bluetooth receipt printer for mobile POS applications',
+      long_desc: 'The TSP143IIIBI combines high-speed printing with wireless Bluetooth connectivity. Perfect for tablet-based POS systems and mobile applications.',
+      msrp: 399.00,
+      map_price: 349.00,
+      stock_status: 'In Stock',
+      categories: ['receipt-printers'],
+      tags: ['thermal', 'Bluetooth', 'mobile', 'retail'],
+      images: [],
+      specs: {
+        'Print Speed': '250mm/sec',
+        'Paper Width': '80mm',
+        'Connectivity': 'Bluetooth',
+        'Auto-Cutter': 'Yes',
+      },
+      warranty: '2 years',
+    },
+    {
+      sku: 'ING-LANE7K',
+      title: 'Ingenico Lane/7000 Payment Terminal',
+      brand_id: brandMap['ingenico'],
+      model: 'Lane/7000',
+      short_desc: 'All-in-one smart payment terminal for retail',
+      long_desc: 'The Lane/7000 delivers a seamless payment experience with support for all payment types including contactless, chip, and swipe. Features a large touchscreen for customer engagement.',
+      msrp: 899.00,
+      map_price: 0,
+      stock_status: 'In Stock',
+      lead_time_days: 7,
+      categories: ['card-readers-and-payments'],
+      tags: ['EMV', 'NFC', 'contactless', 'retail'],
+      images: [],
+      specs: {
+        'Display': '5 inch touchscreen',
+        'Payment Types': 'EMV, NFC, Magstripe',
+        'Connectivity': 'Ethernet, WiFi',
+        'Security': 'PCI PTS 5.x',
+      },
+      warranty: '1 year',
+    },
+    {
+      sku: 'IDTECH-AUGUSTA',
+      title: 'ID TECH Augusta S Payment Terminal',
+      brand_id: brandMap['id-tech'],
+      model: 'Augusta S',
+      short_desc: 'Compact EMV and NFC payment device',
+      long_desc: 'The Augusta S combines small size with powerful features. Accepts all payment types and connects via USB for simple integration.',
+      msrp: 249.00,
+      map_price: 219.00,
+      stock_status: 'In Stock',
+      categories: ['card-readers-and-payments'],
+      tags: ['EMV', 'NFC', 'USB', 'compact'],
+      images: [],
+      specs: {
+        'Payment Types': 'EMV, NFC, Magstripe',
+        'Interface': 'USB',
+        'Dimensions': '3.7 x 3.0 x 1.8 in',
+        'Weight': '6 oz',
+      },
+      warranty: '1 year',
+    },
+    {
+      sku: 'ELO-1502L',
+      title: 'Elo 1502L 15-inch Touchscreen Monitor',
+      brand_id: brandMap['elo'],
+      model: '1502L',
+      short_desc: 'Professional-grade touchscreen display for POS',
+      long_desc: 'The Elo 1502L delivers reliable touch performance in a sleek, space-saving design. Features IntelliTouch surface acoustic wave technology for superior accuracy.',
+      msrp: 599.00,
+      map_price: 529.00,
+      stock_status: 'In Stock',
+      categories: ['touch-displays'],
+      tags: ['touchscreen', '15-inch', 'POS', 'retail'],
+      images: [],
+      specs: {
+        'Display Size': '15.6 inches',
+        'Resolution': '1366 x 768',
+        'Touch Technology': 'IntelliTouch SAW',
+        'Connectivity': 'VGA, HDMI, USB',
+      },
+      warranty: '3 years',
+    },
+    {
+      sku: 'ELO-2202L',
+      title: 'Elo 2202L 22-inch Touchscreen Monitor',
+      brand_id: brandMap['elo'],
+      model: '2202L',
+      short_desc: 'Wide-format touchscreen display for customer-facing applications',
+      long_desc: 'The Elo 2202L provides an immersive experience for self-service kiosks and customer-facing applications. Features edge-to-edge glass design and commercial-grade reliability.',
+      msrp: 899.00,
+      map_price: 799.00,
+      stock_status: 'In Stock',
+      categories: ['touch-displays'],
+      tags: ['touchscreen', '22-inch', 'widescreen', 'kiosk'],
+      images: [],
+      specs: {
+        'Display Size': '21.5 inches',
+        'Resolution': '1920 x 1080',
+        'Touch Technology': 'IntelliTouch Pro PCAP',
+        'Connectivity': 'HDMI, DisplayPort, USB',
+      },
+      warranty: '3 years',
+    },
+  ];
+
+  console.log('Inserting products...');
+  const { error: productError } = await supabase
+    .from('products')
+    .upsert(products, { onConflict: 'sku' });
+
+  if (productError) {
+    console.error('Error seeding products:', productError);
+    process.exit(1);
+  }
+
+  console.log(`✓ Created ${products.length} products`);
+  console.log('\n✅ Database seeded successfully!');
+  console.log(`\nCreated:`);
+  console.log(`  - ${brands.length} brands`);
+  console.log(`  - ${products.length} products`);
+}
+
+seedDatabase()
+  .then(() => process.exit(0))
+  .catch(err => {
+    console.error('Error:', err);
+    process.exit(1);
+  });
