@@ -36,6 +36,7 @@ Deno.serve(async (req: Request) => {
     });
 
     let userId: string | null = null;
+    let requesterUserRecordId: string | null = null;
 
     if (authHeader) {
       const userClient = createClient(SUPABASE_URL, ANON_KEY, {
@@ -44,10 +45,40 @@ Deno.serve(async (req: Request) => {
 
       const { data } = await userClient.auth.getUser();
       userId = data.user?.id ?? null;
+
+      if (userId) {
+        const { data: requesterUser, error: requesterUserError } = await serviceClient
+          .from("users")
+          .select("id")
+          .eq("auth_user_id", userId)
+          .maybeSingle();
+
+        if (requesterUserError) {
+          throw requesterUserError;
+        }
+
+        requesterUserRecordId = requesterUser?.id ?? null;
+      }
     }
 
     const body = await req.json();
     const action = body.action ?? "create";
+
+    const createdByMatchesRequester = (createdBy?: string | null) => {
+      if (!createdBy) {
+        return true;
+      }
+
+      if (requesterUserRecordId && createdBy === requesterUserRecordId) {
+        return true;
+      }
+
+      if (userId && createdBy === userId) {
+        return true;
+      }
+
+      return false;
+    };
 
     if (action === "finalize") {
       const { paymentIntentId } = body;
@@ -86,7 +117,7 @@ Deno.serve(async (req: Request) => {
         throw new Error("Order not found");
       }
 
-      if (order.created_by && userId && order.created_by !== userId) {
+      if (!createdByMatchesRequester(order.created_by)) {
         throw new Error("You do not have permission to modify this order");
       }
 
@@ -137,7 +168,7 @@ Deno.serve(async (req: Request) => {
       throw new Error("Order not found");
     }
 
-    if (order.created_by && userId && order.created_by !== userId) {
+    if (!createdByMatchesRequester(order.created_by)) {
       throw new Error("You do not have permission to pay for this order");
     }
 
