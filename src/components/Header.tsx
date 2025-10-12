@@ -1,20 +1,75 @@
 import { ShoppingCart, User, Search, Menu, ChevronDown } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { catalogCategories } from '../utils/catalogCategories';
+import { useNavigationMenu } from '../contexts/NavigationContext';
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const hoverTimeoutRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState(() => new URLSearchParams(window.location.search).get('search') ?? '');
   const { user, signOut } = useAuth();
   const { itemCount } = useCart();
+  const { items: navigationMenu } = useNavigationMenu();
 
-  const secondaryNav = [
-    { label: 'About', href: '/about' },
-    { label: 'Contact', href: '/contact' },
-  ];
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        window.clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleMegaMenuMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      window.clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setCategoryMenuOpen(true);
+  };
+
+  const handleMegaMenuMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      window.clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = window.setTimeout(() => {
+      setCategoryMenuOpen(false);
+      hoverTimeoutRef.current = null;
+    }, 200);
+  };
+
+  const toggleMegaMenu = () => {
+    if (hoverTimeoutRef.current) {
+      window.clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setCategoryMenuOpen(open => !open);
+  };
+
+  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = searchQuery.trim();
+    const params = new URLSearchParams();
+    if (trimmed) {
+      params.set('search', trimmed);
+    }
+
+    const nextUrl = `/catalog${params.toString() ? `?${params.toString()}` : ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+    if (nextUrl !== currentUrl) {
+      window.location.href = nextUrl;
+    } else {
+      window.location.reload();
+    }
+
+    setMobileMenuOpen(false);
+    setCategoryMenuOpen(false);
+  };
+
+  const closeMobileMenu = () => setMobileMenuOpen(false);
 
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -161,12 +216,12 @@ export default function Header() {
             <div className="flex items-center gap-6">
               <div
                 className="relative"
-                onMouseEnter={() => setCategoryMenuOpen(true)}
-                onMouseLeave={() => setCategoryMenuOpen(false)}
+                onMouseEnter={handleMegaMenuMouseEnter}
+                onMouseLeave={handleMegaMenuMouseLeave}
               >
                 <button
                   type="button"
-                  onClick={() => setCategoryMenuOpen(open => !open)}
+                  onClick={toggleMegaMenu}
                   className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-gray-800 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   Shop products
@@ -175,7 +230,11 @@ export default function Header() {
                   />
                 </button>
                 {categoryMenuOpen && (
-                  <div className="absolute left-0 top-full mt-3 w-screen max-w-4xl rounded-2xl border border-gray-200 bg-white shadow-xl">
+                  <div
+                    className="absolute left-0 top-full mt-3 w-screen max-w-4xl rounded-2xl border border-gray-200 bg-white shadow-xl"
+                    onMouseEnter={handleMegaMenuMouseEnter}
+                    onMouseLeave={handleMegaMenuMouseLeave}
+                  >
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 p-6">
                       {catalogCategories.map(category => (
                         <a
@@ -221,9 +280,9 @@ export default function Header() {
             </div>
 
             <div className="flex gap-6">
-              {secondaryNav.map(item => (
+              {navigationMenu.map(item => (
                 <a
-                  key={item.label}
+                  key={item.id}
                   href={item.href}
                   className="text-sm font-medium text-gray-700 hover:text-blue-600"
                 >
@@ -253,11 +312,11 @@ export default function Header() {
               </div>
 
               <div>
-                <h3 className="text-xs font-semibold uppercase text-gray-500 tracking-wider mb-2">Company</h3>
+                <h3 className="text-xs font-semibold uppercase text-gray-500 tracking-wider mb-2">Quick links</h3>
                 <div className="space-y-2">
-                  {secondaryNav.map(item => (
+                  {navigationMenu.map(item => (
                     <a
-                      key={item.label}
+                      key={item.id}
                       href={item.href}
                       onClick={closeMobileMenu}
                       className="block py-2 text-sm font-medium text-gray-700 hover:text-blue-600"

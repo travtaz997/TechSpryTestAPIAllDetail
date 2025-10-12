@@ -25,6 +25,7 @@ import {
   X,
   Download,
   CreditCard,
+  Navigation,
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -54,6 +55,7 @@ const navigation: NavItem[] = [
   { name: 'Media', path: '/admin/media', icon: Image },
   { name: 'Promotions', path: '/admin/promotions', icon: Megaphone },
   { name: 'Content Blocks', path: '/admin/content-blocks', icon: FileCode },
+  { name: 'Navigation Menu', path: '/admin/navigation', icon: Navigation },
   { name: 'Users', path: '/admin/users', icon: UserCog },
   { name: 'Activity Logs', path: '/admin/activity-logs', icon: Activity },
   { name: 'Jobs', path: '/admin/jobs', icon: Briefcase },

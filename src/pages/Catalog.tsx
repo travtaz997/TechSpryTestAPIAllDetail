@@ -40,9 +40,10 @@ const toTitleCase = (value: string) =>
     .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
 
+const PAGE_SIZE = 24;
+
 export default function Catalog() {
   const [rawProducts, setRawProducts] = useState<Product[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
@@ -55,6 +56,11 @@ export default function Catalog() {
       maxPrice: params.get('maxPrice') ?? '',
       search: params.get('search') ?? '',
     };
+  });
+  const [currentPage, setCurrentPage] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = Number.parseInt(params.get('page') ?? '1', 10);
+    return Number.isNaN(pageParam) ? 1 : Math.max(1, pageParam);
   });
   const { addItem } = useCart();
 
@@ -85,10 +91,6 @@ export default function Catalog() {
   }, [brands, filters.brand, filters.category]);
 
   useEffect(() => {
-    setProducts(applyClientFilters(rawProducts));
-  }, [rawProducts, filters, brands]);
-
-  useEffect(() => {
     if (window.location.pathname !== '/catalog') return;
 
     const params = new URLSearchParams();
@@ -97,6 +99,7 @@ export default function Catalog() {
     if (filters.minPrice) params.set('minPrice', filters.minPrice);
     if (filters.maxPrice) params.set('maxPrice', filters.maxPrice);
     if (filters.search) params.set('search', filters.search);
+    if (currentPage > 1) params.set('page', currentPage.toString());
 
     const searchString = params.toString();
     const nextUrl = searchString ? `/catalog?${searchString}` : '/catalog';
@@ -105,14 +108,28 @@ export default function Catalog() {
     if (nextUrl !== currentUrl) {
       window.history.replaceState(null, '', nextUrl);
     }
-  }, [filters]);
+  }, [filters, currentPage]);
+
+  const filteredProducts = useMemo(
+    () => applyClientFilters(rawProducts),
+    [rawProducts, filters, brands, brandMap, categoryMap, selectedBrand],
+  );
+
+  useEffect(() => {
+    setCurrentPage(prevPage => {
+      const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
+      return Math.min(prevPage, totalPages);
+    });
+  }, [filteredProducts.length]);
 
   const updateFilters = (partial: Partial<CatalogFilters>) => {
     setFilters(prev => ({ ...prev, ...partial }));
+    setCurrentPage(1);
   };
 
   const clearFilters = () => {
     setFilters({ brand: '', category: '', minPrice: '', maxPrice: '', search: '' });
+    setCurrentPage(1);
   };
 
   const handleImageError = (event: SyntheticEvent<HTMLImageElement>) => {
@@ -224,8 +241,47 @@ export default function Catalog() {
     });
   }
 
-  const productCountLabel = `${products.length} ${products.length === 1 ? 'product' : 'products'} available`;
+  const totalProducts = filteredProducts.length;
+  const totalPages = Math.max(1, Math.ceil(totalProducts / PAGE_SIZE));
+  const currentPageSafe = Math.min(currentPage, totalPages);
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (currentPageSafe - 1) * PAGE_SIZE;
+    return filteredProducts.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [filteredProducts, currentPageSafe]);
+
+  const productCountLabel = `${totalProducts} ${totalProducts === 1 ? 'product' : 'products'} available`;
+  const startRange = totalProducts === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
+  const endRange = totalProducts === 0 ? 0 : Math.min(totalProducts, startRange + paginatedProducts.length - 1);
   const selectedBrandName = selectedBrand?.name ?? '';
+
+  const paginationPages = useMemo(() => {
+    const pages: (number | 'ellipsis')[] = [];
+    if (totalPages <= 7) {
+      for (let page = 1; page <= totalPages; page += 1) {
+        pages.push(page);
+      }
+      return pages;
+    }
+
+    pages.push(1);
+    const windowStart = Math.max(2, currentPageSafe - 1);
+    const windowEnd = Math.min(totalPages - 1, currentPageSafe + 1);
+
+    if (windowStart > 2) {
+      pages.push('ellipsis');
+    }
+
+    for (let page = windowStart; page <= windowEnd; page += 1) {
+      pages.push(page);
+    }
+
+    if (windowEnd < totalPages - 1) {
+      pages.push('ellipsis');
+    }
+
+    pages.push(totalPages);
+    return pages;
+  }, [totalPages, currentPageSafe]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -234,6 +290,11 @@ export default function Catalog() {
           <h1 className="text-3xl font-bold text-gray-800">Product Catalog</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span>{productCountLabel}</span>
+            {totalProducts > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700">
+                Showing {startRange} - {endRange}
+              </span>
+            )}
             {activeCategory && (
               <span className="ml-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700">
                 Category: {activeCategory.label}
@@ -371,14 +432,14 @@ export default function Catalog() {
             <div className="text-center py-12">
               <div className="text-gray-600">Loading products...</div>
             </div>
-          ) : products.length === 0 ? (
+          ) : filteredProducts.length === 0 ? (
             <div className="text-center py-12">
               <div className="text-lg font-semibold text-gray-800 mb-2">No matching products</div>
               <p className="text-gray-600">Try broadening your search or clearing some filters.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {products.map(product => {
+              {paginatedProducts.map(product => {
                 const brandName = brandMap.get(product.brand_id)?.name ?? product.manufacturer ?? 'TechSpry';
                 const productImage = getHeroImage(product) ?? FALLBACK_PRODUCT_IMAGE;
                 const formattedPrice = formatCurrency(product.sale_price ?? product.map_price);
@@ -446,6 +507,53 @@ export default function Catalog() {
                   </div>
                 );
               })}
+            </div>
+          )}
+          {filteredProducts.length > 0 && totalPages > 1 && (
+            <div className="mt-8 flex flex-col items-center gap-4">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                  disabled={currentPageSafe === 1}
+                  className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                >
+                  Previous
+                </button>
+                <div className="flex items-center gap-1">
+                  {paginationPages.map((page, index) =>
+                    page === 'ellipsis' ? (
+                      <span key={`ellipsis-${index}`} className="px-2 text-sm text-gray-400">
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={page}
+                        type="button"
+                        onClick={() => setCurrentPage(page)}
+                        className={`min-w-[2.5rem] rounded-full px-3 py-2 text-sm font-semibold transition ${
+                          page === currentPageSafe
+                            ? 'bg-blue-600 text-white shadow'
+                            : 'text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                  disabled={currentPageSafe === totalPages}
+                  className="rounded-full border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="text-xs text-gray-500">
+                Page {currentPageSafe} of {totalPages}
+              </div>
             </div>
           )}
         </div>
