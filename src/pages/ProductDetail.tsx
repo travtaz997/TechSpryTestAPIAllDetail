@@ -172,7 +172,7 @@ export default function ProductDetail() {
         title: product.title,
         brand: brandName,
         image: heroImage || '',
-        price: product.map_price,
+        price: product.sale_price ?? product.map_price,
       },
       quantity,
     );
@@ -328,10 +328,12 @@ export default function ProductDetail() {
 
           <div className="bg-gray-50 p-6 rounded-lg mb-6">
             <div className="flex items-baseline gap-3 mb-4">
-              {product.map_price > 0 ? (
+              {(product.sale_price ?? product.map_price ?? 0) > 0 ? (
                 <>
-                  <div className="text-4xl font-bold text-gray-800">${product.map_price.toFixed(2)}</div>
-                  {product.msrp > product.map_price && (
+                  <div className="text-4xl font-bold text-gray-800">
+                    ${(product.sale_price ?? product.map_price ?? 0).toFixed(2)}
+                  </div>
+                  {product.msrp > (product.sale_price ?? product.map_price ?? 0) && (
                     <div className="text-xl text-gray-500 line-through">${product.msrp.toFixed(2)}</div>
                   )}
                 </>
@@ -394,11 +396,11 @@ export default function ProductDetail() {
             <div className="space-y-3">
               <button
                 onClick={handleAddToCart}
-                disabled={product.map_price === 0}
+                disabled={(product.sale_price ?? product.map_price ?? 0) === 0}
                 className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 <ShoppingCart className="h-5 w-5" />
-                {product.map_price > 0 ? 'Add to Cart' : 'Contact for Price'}
+                {(product.sale_price ?? product.map_price ?? 0) > 0 ? 'Add to Cart' : 'Contact for Price'}
               </button>
               <button className="w-full bg-white border-2 border-blue-600 text-blue-600 py-3 px-6 rounded-lg hover:bg-blue-50 transition font-semibold flex items-center justify-center gap-2">
                 <FileText className="h-5 w-5" />

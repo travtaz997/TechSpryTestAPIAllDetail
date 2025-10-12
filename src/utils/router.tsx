@@ -26,6 +26,7 @@ import AdminSettings from '../pages/admin/AdminSettings';
 import AdminPlaceholder from '../pages/admin/AdminPlaceholder';
 import AdminScanSource from '../pages/admin/AdminScanSource';
 import AdminNetTerms from '../pages/admin/AdminNetTerms';
+import AdminPricing from '../pages/admin/AdminPricing';
 import { AdminGuard } from './adminGuard';
 
 interface Route {
@@ -59,6 +60,7 @@ const routes: Route[] = [
   { path: '/admin/bundles', component: () => <AdminGuard><AdminPlaceholder title="Bundles" /></AdminGuard>, exact: true },
   { path: '/admin/customers', component: () => <AdminGuard><AdminCustomers /></AdminGuard>, exact: true },
   { path: '/admin/net-terms', component: () => <AdminGuard><AdminNetTerms /></AdminGuard>, exact: true },
+  { path: '/admin/pricing', component: () => <AdminGuard><AdminPricing /></AdminGuard>, exact: true },
   { path: '/admin/orders', component: () => <AdminGuard><AdminOrders /></AdminGuard>, exact: true },
   { path: '/admin/quotes', component: () => <AdminGuard><AdminPlaceholder title="Quotes" /></AdminGuard>, exact: true },
   { path: '/admin/price-rules', component: () => <AdminGuard><AdminPlaceholder title="Price Rules" /></AdminGuard>, exact: true },

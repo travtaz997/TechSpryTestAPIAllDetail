@@ -23,6 +23,8 @@ interface ProductFormData {
   specs: string;
   msrp: string;
   map_price: string;
+  reseller_price: string;
+  price_adjustment_type: 'fixed' | 'percent';
   stock_status: string;
   lead_time_days: string;
   weight: string;
@@ -57,6 +59,8 @@ export default function AdminProductForm() {
     specs: '',
     msrp: '0',
     map_price: '0',
+    reseller_price: '0',
+    price_adjustment_type: 'fixed',
     stock_status: 'In Stock',
     lead_time_days: '0',
     weight: '0',
@@ -103,7 +107,9 @@ export default function AdminProductForm() {
           tags: data.tags ? JSON.stringify(data.tags) : '',
           specs: data.specs ? JSON.stringify(data.specs, null, 2) : '',
           msrp: String(data.msrp || 0),
-          map_price: String(data.map_price || 0),
+          map_price: String(data.sale_price ?? data.map_price ?? 0),
+          reseller_price: String(data.reseller_price ?? 0),
+          price_adjustment_type: (data.price_adjustment_type as 'fixed' | 'percent') ?? 'fixed',
           stock_status: data.stock_status || 'In Stock',
           lead_time_days: String(data.lead_time_days || 0),
           weight: String(data.weight || 0),
@@ -129,6 +135,13 @@ export default function AdminProductForm() {
     try {
       const msrp = parseFloat(formData.msrp);
       const mapPrice = parseFloat(formData.map_price);
+      const resellerPrice = parseFloat(formData.reseller_price);
+      const adjustmentType = formData.price_adjustment_type;
+      const adjustmentValue = adjustmentType === 'percent'
+        ? resellerPrice > 0
+          ? ((mapPrice - resellerPrice) / resellerPrice) * 100
+          : 0
+        : mapPrice - resellerPrice;
 
       if (mapPrice > msrp) {
         throw new Error('MAP price cannot exceed MSRP');
@@ -200,7 +213,11 @@ export default function AdminProductForm() {
         tags,
         specs,
         msrp: parseFloat(formData.msrp),
-        map_price: parseFloat(formData.map_price),
+        map_price: mapPrice,
+        sale_price: mapPrice,
+        reseller_price: resellerPrice,
+        price_adjustment_type: adjustmentType,
+        price_adjustment_value: adjustmentValue,
         stock_status: formData.stock_status,
         lead_time_days: parseInt(formData.lead_time_days) || 0,
         weight: parseFloat(formData.weight),
@@ -466,7 +483,7 @@ export default function AdminProductForm() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  MAP Price
+                  Customer Sale Price
                 </label>
                 <input
                   type="number"
@@ -474,6 +491,21 @@ export default function AdminProductForm() {
                   min="0"
                   value={formData.map_price}
                   onChange={(e) => handleChange('map_price', e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Reseller Price (Cost)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.reseller_price}
+                  onChange={(e) => handleChange('reseller_price', e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="0.00"
                 />

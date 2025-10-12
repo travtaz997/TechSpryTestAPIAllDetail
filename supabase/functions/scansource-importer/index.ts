@@ -863,8 +863,12 @@ async function handlePublish(req: Request): Promise<Response> {
         if (existingLink) { results.push({ itemNumber, status: "already_published" }); continue; }
 
         const pricing = supplierItem.pricing_json || {};
-        const msrp = pricing.MSRP || pricing.msrp || 0;
-        const mapPrice = pricing.UnitPrice || pricing.unitPrice || msrp;
+        const rawMsrp = Number(pricing.MSRP ?? pricing.msrp ?? pricing.Msrp ?? 0);
+        const msrp = Number.isFinite(rawMsrp) ? rawMsrp : 0;
+        const rawReseller = Number(pricing.UnitPrice ?? pricing.unitPrice ?? pricing.Unitprice ?? msrp);
+        const resellerPrice = Number.isFinite(rawReseller) ? rawReseller : 0;
+        const defaultSalePrice = Math.max(msrp > 0 ? msrp : 0, resellerPrice);
+        const adjustmentValue = defaultSalePrice - resellerPrice;
         const computedAvailability = extractAvailability(pricing);
         const stockAvailable =
           typeof supplierItem.stock_available === "number" && Number.isFinite(supplierItem.stock_available)
@@ -910,7 +914,11 @@ async function handlePublish(req: Request): Promise<Response> {
             category_path: supplierItem.category_path || null,
             categories: categoryList,
             msrp,
-            map_price: mapPrice,
+            map_price: defaultSalePrice,
+            reseller_price: resellerPrice,
+            sale_price: defaultSalePrice,
+            price_adjustment_type: 'fixed',
+            price_adjustment_value: adjustmentValue,
             item_status: supplierItem.item_status || null,
             stock_status: supplierItem.item_status || "Unknown",
             plant_material_status_valid_from: supplierItem.plant_material_status_valid_from || null,

@@ -11,6 +11,10 @@ interface Product {
   published: boolean;
   stock_status: string;
   map_price: number;
+  sale_price: number | null;
+  reseller_price: number | null;
+  price_adjustment_type: string | null;
+  price_adjustment_value: number | null;
   updated_at: string;
 }
 
@@ -233,7 +237,7 @@ export default function AdminProducts() {
                     Brand
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Price
+                    Pricing
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Stock
@@ -247,67 +251,82 @@ export default function AdminProducts() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {products.map((product) => (
-                  <tr key={product.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-4 whitespace-nowrap text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                        checked={selectedProducts.includes(product.id)}
-                        onChange={() => toggleProductSelection(product.id)}
-                        aria-label={`Select product ${product.title}`}
-                      />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
-                      {product.sku}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-800">{product.title}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {getBrandName(product.brand_id)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">
-                      ${Number(product.map_price).toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-semibold ${
-                          product.stock_status === 'In Stock'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}
-                      >
-                        {product.stock_status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span
-                        className={`px-2 py-1 rounded text-xs font-semibold ${
-                          product.published
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {product.published ? 'Published' : 'Draft'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex justify-end gap-2">
-                        <a
-                          href={`/admin/products/${product.id}`}
-                          className="text-blue-600 hover:text-blue-800"
+                {products.map((product) => {
+                  const salePrice = Number(product.sale_price ?? product.map_price ?? 0);
+                  const resellerPrice = Number(product.reseller_price ?? 0);
+                  const margin = salePrice - resellerPrice;
+                  const belowCost = salePrice < resellerPrice;
+
+                  return (
+                    <tr key={product.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-4 whitespace-nowrap text-sm">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                          checked={selectedProducts.includes(product.id)}
+                          onChange={() => toggleProductSelection(product.id)}
+                          aria-label={`Select product ${product.title}`}
+                        />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
+                        {product.sku}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-800">{product.title}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {getBrandName(product.brand_id)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">
+                        <div className="font-semibold text-gray-800">
+                          ${salePrice.toFixed(2)}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Cost: ${resellerPrice.toFixed(2)}
+                        </div>
+                        <div className={`text-xs font-semibold ${belowCost ? 'text-red-600' : 'text-green-600'}`}>
+                          {belowCost ? 'Margin' : 'Profit'}: ${margin.toFixed(2)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-semibold ${
+                            product.stock_status === 'In Stock'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}
                         >
-                          <Edit className="w-4 h-4" />
-                        </a>
-                        <button
-                          onClick={() => handleDelete(product.id)}
-                          className="text-red-600 hover:text-red-800"
+                          {product.stock_status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-semibold ${
+                            product.published
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
                         >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {product.published ? 'Published' : 'Draft'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div className="flex justify-end gap-2">
+                          <a
+                            href={`/admin/products/${product.id}`}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </a>
+                          <button
+                            onClick={() => handleDelete(product.id)}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
