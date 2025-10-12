@@ -278,18 +278,45 @@ curl -X POST {base_url}/import/publish \
 - `itemNumber` → `item_number` (PK)
 - `manufacturerItemNumber` → `mfr_item_number`
 - `manufacturer` → `manufacturer`
-- `description` → `title`
+- `description` → `title` and `description`
 - `catalogName` → `catalog_name`
 - `categoryPath` → `category_path`
 - `productFamily` → `product_family`
-- `productFamilyDescription` → `product_family_headline`
+- `productFamilyDescription` → `product_family_description`
+- `productFamilyHeadline` → `product_family_headline`
 - `itemStatus` → `item_status`
 - `itemImage` → `item_image_url`
 - `productFamilyImage` → `product_family_image_url`
 
 **product/detail:**
-- Entire response → `detail_json` (jsonb)
-- Includes: dimensions, weight, compliance, UNSPSC, country of origin, etc.
+- `PlantMaterialStatusValidfrom` → `plant_material_status_valid_from`
+- `BusinessUnit` → `business_unit`
+- `ReboxItem` → `rebox_item`
+- `BStockItem` → `b_stock_item`
+- `BaseUnitofMeasure` → `base_unit_of_measure`
+- `GeneralItemCategoryGroup` → `general_item_category_group`
+- `GrossWeight` → `gross_weight`
+- `MaterialGroup` → `material_group`
+- `MaterialType` → `material_type`
+- `BatteryIndicator` → `battery_indicator`
+- `RoHSComplianceIndicator` → `rohs_compliance_indicator`
+- `ManufacturerDivision` → `manufacturer_division`
+- `CommodityImportCodeNumber` → `commodity_import_code_number`
+- `CountryofOrigin` → `country_of_origin`
+- `UNSPSC` → `unspsc`
+- `DeliveringPlant` → `delivering_plant`
+- `MaterialFreightGroup` → `material_freight_group`
+- `MinimumOrderQuantity` → `minimum_order_quantity`
+- `SalespersonInterventionRequired` → `salesperson_intervention_required`
+- `SellviaEDI` → `sell_via_edi`
+- `SellviaWeb` → `sell_via_web`
+- `SerialNumberProfile` → `serial_number_profile`
+- `PackagedLength` → `packaged_length`
+- `PackagedWidth` → `packaged_width`
+- `PackagedHeight` → `packaged_height`
+- `DateAdded` → `date_added`
+- `ProductMedia` → `product_media`
+- Full payload → `detail_json` (jsonb)
 
 **product/pricing:**
 - Response (minus DealInfos) → `pricing_json` (jsonb)

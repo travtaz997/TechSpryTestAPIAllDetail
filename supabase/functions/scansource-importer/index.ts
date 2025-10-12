@@ -96,6 +96,55 @@ function normalizePartKey(value: string | null | undefined): string {
   return String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function readField(source: any, key: string): any {
+  if (!source || typeof source !== "object") return undefined;
+  if (key in source) return source[key];
+
+  const lowerCamel = key.charAt(0).toLowerCase() + key.slice(1);
+  if (lowerCamel in source) return source[lowerCamel];
+
+  const snake = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase();
+  if (snake in source) return source[snake];
+
+  return undefined;
+}
+
+function pickField(detail: any, summary: any, key: string): any {
+  const detailValue = readField(detail, key);
+  if (detailValue !== undefined && detailValue !== null) return detailValue;
+  return readField(summary, key);
+}
+
+function toBoolean(value: any): boolean | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["y", "yes", "true", "1"].includes(normalized)) return true;
+    if (["n", "no", "false", "0"].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function toNumber(value: any): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function toInteger(value: any): number | null {
+  const intVal = Number.parseInt(value, 10);
+  return Number.isFinite(intVal) ? intVal : null;
+}
+
+function toTimestamp(value: any): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function pickDescription(summary: any, detail: any): string | null {
   const nameCandidates: Array<unknown> = [
     detail?.ItemName,
@@ -425,40 +474,88 @@ async function processImportJob(jobId: string, config: any) {
             detailData = await callApi(`/detail?${detailParams.toString()}`);
           } catch { /* non-fatal */ }
 
+          const detailRecord = detailData?.ProductDetail ?? detailData ?? {};
+
           // Pricing/availability row (single row object)
           const pricingData = batchPricingMap.get(itemNumber) || {};
 
           // compute availability from pricing payload
           const availability = extractAvailability(pricingData);
-          const description = pickDescription(item, detailData);
+          const normalizedAvailability =
+            typeof availability === "number" && Number.isFinite(availability)
+              ? Math.trunc(availability)
+              : null;
+          const description = pickDescription(item, detailRecord);
+
+          const productMediaRaw = pickField(detailRecord, item, "ProductMedia");
+          const productMedia = Array.isArray(productMediaRaw)
+            ? productMediaRaw.map((media: any) => ({
+                MediaType: media?.MediaType ?? media?.mediaType ?? null,
+                URL: media?.URL ?? media?.url ?? null,
+              }))
+            : [];
 
           // write to staging
           const baseRecord = {
             item_number: itemNumber,
-            mfr_item_number: item.ManufacturerItemNumber || item.manufacturerItemNumber || null,
-            manufacturer: item.Manufacturer || item.manufacturer || null,
-            title: item.Description || item.description || null,
+            mfr_item_number: pickField(detailRecord, item, "ManufacturerItemNumber") ?? null,
+            manufacturer: pickField(detailRecord, item, "Manufacturer") ?? null,
+            title: pickField(detailRecord, item, "Description") ?? null,
+            description: pickField(detailRecord, item, "Description") ?? null,
             item_description: description,
-            catalog_name: item.CatalogName || item.catalogName || null,
-            category_path: item.CategoryPath || item.categoryPath || null,
-            product_family: item.ProductFamily || item.productFamily || null,
-            product_family_headline: item.ProductFamilyDescription || item.productFamilyDescription || null,
-            item_status: item.ItemStatus || item.itemStatus || null,
-            item_image_url: item.ItemImage || item.itemImage || null,
-            product_family_image_url: item.ProductFamilyImage || item.productFamilyImage || null,
+            catalog_name: pickField(detailRecord, item, "CatalogName") ?? null,
+            category_path: pickField(detailRecord, item, "CategoryPath") ?? null,
+            product_family: pickField(detailRecord, item, "ProductFamily") ?? null,
+            product_family_description: pickField(detailRecord, item, "ProductFamilyDescription") ?? null,
+            product_family_headline: pickField(detailRecord, item, "ProductFamilyHeadline") ?? null,
+            item_status: pickField(detailRecord, item, "ItemStatus") ?? null,
+            item_image_url: pickField(detailRecord, item, "ItemImage") ?? null,
+            product_family_image_url: pickField(detailRecord, item, "ProductFamilyImage") ?? null,
+            business_unit: pickField(detailRecord, item, "BusinessUnit") ?? null,
+            plant_material_status_valid_from: toTimestamp(pickField(detailRecord, item, "PlantMaterialStatusValidfrom")),
+            rebox_item: toBoolean(pickField(detailRecord, item, "ReboxItem")),
+            b_stock_item: toBoolean(pickField(detailRecord, item, "BStockItem")),
+            base_unit_of_measure: pickField(detailRecord, item, "BaseUnitofMeasure") ?? null,
+            general_item_category_group: pickField(detailRecord, item, "GeneralItemCategoryGroup") ?? null,
+            gross_weight: toNumber(pickField(detailRecord, item, "GrossWeight")),
+            material_group: pickField(detailRecord, item, "MaterialGroup") ?? null,
+            material_type: pickField(detailRecord, item, "MaterialType") ?? null,
+            battery_indicator: pickField(detailRecord, item, "BatteryIndicator") ?? null,
+            rohs_compliance_indicator: pickField(detailRecord, item, "RoHSComplianceIndicator") ?? null,
+            manufacturer_division: pickField(detailRecord, item, "ManufacturerDivision") ?? null,
+            commodity_import_code_number: pickField(detailRecord, item, "CommodityImportCodeNumber") ?? null,
+            country_of_origin: pickField(detailRecord, item, "CountryofOrigin") ?? null,
+            unspsc: pickField(detailRecord, item, "UNSPSC") ?? null,
+            delivering_plant: pickField(detailRecord, item, "DeliveringPlant") ?? null,
+            material_freight_group: pickField(detailRecord, item, "MaterialFreightGroup") ?? null,
+            minimum_order_quantity: toInteger(pickField(detailRecord, item, "MinimumOrderQuantity")),
+            salesperson_intervention_required: toBoolean(
+              pickField(detailRecord, item, "SalespersonInterventionRequired"),
+            ),
+            sell_via_edi: toBoolean(pickField(detailRecord, item, "SellviaEDI")),
+            sell_via_web: pickField(detailRecord, item, "SellviaWeb") ?? null,
+            serial_number_profile: pickField(detailRecord, item, "SerialNumberProfile") ?? null,
+            packaged_length: toNumber(pickField(detailRecord, item, "PackagedLength")),
+            packaged_width: toNumber(pickField(detailRecord, item, "PackagedWidth")),
+            packaged_height: toNumber(pickField(detailRecord, item, "PackagedHeight")),
+            date_added: toTimestamp(pickField(detailRecord, item, "DateAdded")),
+            product_media: productMedia,
 
             // raw payloads
             detail_json: detailData,
             pricing_json: pricingData,
 
-            // NEW: persist availability
-            stock_available: availability ?? null,
-            stock_updated_at: availability != null ? new Date().toISOString() : null,
+            // availability
+            stock_available: normalizedAvailability,
+            stock_updated_at: normalizedAvailability != null ? new Date().toISOString() : null,
 
-            discontinued: (item.ItemStatus || item.itemStatus || "").toLowerCase().includes("discontinued") || false,
+            discontinued:
+              String(pickField(detailRecord, item, "ItemStatus") || "")
+                .toLowerCase()
+                .includes("discontinued") || false,
             last_synced_at: new Date().toISOString(),
-            manufacturer_norm: normalize(item.Manufacturer || item.manufacturer || ""),
-            category_norm: normalize(item.CategoryPath || item.categoryPath || ""),
+            manufacturer_norm: normalize(pickField(detailRecord, item, "Manufacturer") || ""),
+            category_norm: normalize(pickField(detailRecord, item, "CategoryPath") || ""),
           } as const;
 
           // upsert by item_number (safe if unique key exists)
@@ -674,7 +771,9 @@ async function handleStagingItems(req: Request): Promise<Response> {
     if (search) {
       const escaped = escapeIlike(search);
       query = query.or(
-        ["item_number", "title", "mfr_item_number", "item_description"].map((field) => `${field}.ilike.%${escaped}%`).join(",")
+        ["item_number", "title", "description", "mfr_item_number", "item_description"].map(
+          (field) => `${field}.ilike.%${escaped}%`,
+        ).join(","),
       );
     }
 
@@ -705,7 +804,7 @@ async function handleDiff(req: Request): Promise<Response> {
 
     const { data: supplierItems, error: siErr } = await svc
       .from("supplier_items")
-      .select("item_number, title, pricing_json, manufacturer, category_path")
+      .select("item_number, title, description, pricing_json, manufacturer, category_path")
       .order("last_synced_at", { ascending: false });
 
     if (siErr) throw siErr;
@@ -720,14 +819,17 @@ async function handleDiff(req: Request): Promise<Response> {
     const linked = new Set((links || []).map((r) => r.item_number));
     const newItems = (supplierItems || []).filter((i) => !linked.has(i.item_number));
 
-    const shapedNew = newItems.map((i) => ({
-      item_number: i.item_number,
-      title: i.title,
-      msrp: i.pricing_json?.MSRP || i.pricing_json?.msrp,
-      manufacturer: i.manufacturer,
-      category: i.category_path,
-      availability: extractAvailability(i.pricing_json),
-    }));
+    const shapedNew = newItems.map((i) => {
+      const msrpValue = Number(i.pricing_json?.MSRP ?? i.pricing_json?.msrp ?? i.pricing_json?.Msrp ?? NaN);
+      return {
+        item_number: i.item_number,
+        title: i.description || i.title,
+        msrp: Number.isFinite(msrpValue) ? msrpValue : undefined,
+        manufacturer: i.manufacturer,
+        category: i.category_path,
+        availability: extractAvailability(i.pricing_json),
+      };
+    });
 
     return new Response(
       JSON.stringify({ new: shapedNew, changed: [], unchanged: Array.from(linked) }),
@@ -769,18 +871,80 @@ async function handlePublish(req: Request): Promise<Response> {
             ? supplierItem.stock_available
             : computedAvailability ?? null;
 
+        const categoryList = supplierItem.category_path
+          ? (supplierItem.category_path as string)
+              .split("//")
+              .map((segment) => segment.trim())
+              .filter((segment) => segment.length > 0)
+          : null;
+
+        const productMedia = Array.isArray(supplierItem.product_media) ? supplierItem.product_media : [];
+        const detailJson = supplierItem.detail_json && typeof supplierItem.detail_json === "object" ? supplierItem.detail_json : {};
+
         const { data: newProduct } = await svc
           .from("products")
           .insert({
             sku: supplierItem.item_number,
-            title: supplierItem.title,
-            model: supplierItem.mfr_item_number,
-            short_desc: supplierItem.product_family_headline,
-            categories: supplierItem.category_path ? [supplierItem.category_path] : null,
+            title: supplierItem.description || supplierItem.title || supplierItem.item_number,
+            manufacturer: supplierItem.manufacturer || null,
+            manufacturer_item_number: supplierItem.mfr_item_number || null,
+            model: supplierItem.mfr_item_number || null,
+            short_desc:
+              supplierItem.product_family_headline ||
+              supplierItem.product_family_description ||
+              supplierItem.item_description ||
+              null,
+            long_desc: supplierItem.item_description || supplierItem.description || null,
+            item_description: supplierItem.item_description || null,
+            product_family: supplierItem.product_family || null,
+            product_family_description: supplierItem.product_family_description || null,
+            product_family_headline:
+              supplierItem.product_family_headline ||
+              supplierItem.product_family_description ||
+              supplierItem.item_description ||
+              null,
+            product_family_image_url: supplierItem.product_family_image_url || null,
+            item_image_url: supplierItem.item_image_url || null,
+            catalog_name: supplierItem.catalog_name || null,
+            business_unit: supplierItem.business_unit || null,
+            category_path: supplierItem.category_path || null,
+            categories: categoryList,
             msrp,
             map_price: mapPrice,
+            item_status: supplierItem.item_status || null,
             stock_status: supplierItem.item_status || "Unknown",
+            plant_material_status_valid_from: supplierItem.plant_material_status_valid_from || null,
             stock_available: stockAvailable ?? 0,
+            rebox_item: typeof supplierItem.rebox_item === "boolean" ? supplierItem.rebox_item : null,
+            b_stock_item: typeof supplierItem.b_stock_item === "boolean" ? supplierItem.b_stock_item : null,
+            base_unit_of_measure: supplierItem.base_unit_of_measure || null,
+            general_item_category_group: supplierItem.general_item_category_group || null,
+            gross_weight: supplierItem.gross_weight ?? null,
+            weight: supplierItem.gross_weight ?? null,
+            material_group: supplierItem.material_group || null,
+            material_type: supplierItem.material_type || null,
+            battery_indicator: supplierItem.battery_indicator || null,
+            rohs_compliance_indicator: supplierItem.rohs_compliance_indicator || null,
+            manufacturer_division: supplierItem.manufacturer_division || null,
+            commodity_import_code_number: supplierItem.commodity_import_code_number || null,
+            country_of_origin: supplierItem.country_of_origin || null,
+            unspsc: supplierItem.unspsc || null,
+            delivering_plant: supplierItem.delivering_plant || null,
+            material_freight_group: supplierItem.material_freight_group || null,
+            minimum_order_quantity: supplierItem.minimum_order_quantity ?? null,
+            salesperson_intervention_required:
+              typeof supplierItem.salesperson_intervention_required === "boolean"
+                ? supplierItem.salesperson_intervention_required
+                : null,
+            sell_via_edi: typeof supplierItem.sell_via_edi === "boolean" ? supplierItem.sell_via_edi : null,
+            sell_via_web: supplierItem.sell_via_web || null,
+            serial_number_profile: supplierItem.serial_number_profile || null,
+            packaged_length: supplierItem.packaged_length ?? null,
+            packaged_width: supplierItem.packaged_width ?? null,
+            packaged_height: supplierItem.packaged_height ?? null,
+            date_added: supplierItem.date_added || null,
+            product_media: productMedia,
+            detail_json: detailJson,
             published: true,
           })
           .select("id")
