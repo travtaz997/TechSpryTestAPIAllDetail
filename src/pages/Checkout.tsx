@@ -62,6 +62,14 @@ const shippingMethods = [
   { id: 'overnight', name: 'Overnight Shipping', cost: 50, days: '1 business day' },
 ];
 
+const PENDING_PAYMENT_STORAGE_KEY = 'checkout_pending_stripe_payment';
+
+interface PendingPaymentDetails {
+  orderId: string;
+  amount: number;
+  email?: string;
+}
+
 export default function Checkout() {
   const { user, profile } = useAuth();
   const { items, total, clearCart } = useCart();
@@ -79,6 +87,68 @@ export default function Checkout() {
   const [showPayment, setShowPayment] = useState(false);
   const [tempOrderId, setTempOrderId] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
+  const [pendingPayment, setPendingPayment] = useState<PendingPaymentDetails | null>(null);
+
+  function persistPendingPayment(details: PendingPaymentDetails) {
+    setPendingPayment(details);
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.sessionStorage.setItem(PENDING_PAYMENT_STORAGE_KEY, JSON.stringify(details));
+    } catch (storageError) {
+      console.warn('Failed to persist pending payment details', storageError);
+    }
+  }
+
+  function clearPendingPaymentStorage() {
+    setPendingPayment(null);
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.sessionStorage.removeItem(PENDING_PAYMENT_STORAGE_KEY);
+    } catch (storageError) {
+      console.warn('Failed to clear pending payment details', storageError);
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const stored = window.sessionStorage.getItem(PENDING_PAYMENT_STORAGE_KEY);
+
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as PendingPaymentDetails;
+
+      if (!parsed || typeof parsed.orderId !== 'string' || typeof parsed.amount !== 'number') {
+        window.sessionStorage.removeItem(PENDING_PAYMENT_STORAGE_KEY);
+        return;
+      }
+
+      setPendingPayment(parsed);
+      setTempOrderId(parsed.orderId);
+      setShowPayment(true);
+      setPaymentMethod('card');
+
+      if (!user && parsed.email) {
+        setGuestEmail((current) => current || parsed.email || '');
+      }
+    } catch (parseError) {
+      console.warn('Failed to restore pending payment details', parseError);
+      window.sessionStorage.removeItem(PENDING_PAYMENT_STORAGE_KEY);
+    }
+  }, [user]);
 
   async function resolveActiveProfile(): Promise<UserProfileRecord | null> {
     if (!user) {
@@ -107,19 +177,66 @@ export default function Checkout() {
   }
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const paymentSuccess = urlParams.get('success');
-    const paymentIntentId = urlParams.get('payment_intent');
+    if (typeof window === 'undefined') {
+      return;
+    }
 
-    if (paymentSuccess === 'true' && paymentIntentId) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentIntentId = urlParams.get('payment_intent');
+    const redirectStatus = urlParams.get('redirect_status');
+    const paymentSuccess = urlParams.get('success');
+
+    if (paymentIntentId && redirectStatus === 'succeeded') {
       handlePaymentReturn(paymentIntentId);
       return;
     }
 
+    if (paymentIntentId && redirectStatus) {
+      let redirectError = '';
+
+      switch (redirectStatus) {
+        case 'requires_payment_method':
+          redirectError = 'Your payment could not be completed. Please try a different payment method or card.';
+          break;
+        case 'canceled':
+          redirectError = 'Your payment was canceled before it could be completed. Please try again if you still wish to place this order.';
+          break;
+        case 'processing':
+          redirectError = 'Your payment is still processing. We will update your order once the payment is confirmed.';
+          break;
+        default:
+          redirectError = 'We could not confirm your payment. Please try again or contact support if the issue persists.';
+          break;
+      }
+
+      if (redirectError) {
+        setError(redirectError);
+      }
+
+      setProcessing(false);
+      setLoading(false);
+      setPaymentMethod('card');
+
+      if (pendingPayment) {
+        setTempOrderId(pendingPayment.orderId);
+        setShowPayment(true);
+      }
+
+      window.history.replaceState({}, '', '/checkout');
+      return;
+    }
+
+    if (paymentSuccess === 'true' && paymentIntentId) {
+      handlePaymentReturn(paymentIntentId);
+    }
+  }, [pendingPayment]);
+
+  useEffect(() => {
     if (user && profile?.customer_id) {
       loadCustomer();
     } else {
       setLoading(false);
+
       if (user) {
         setBillingAddress({ ...emptyAddress, name: user.email || '' });
         setShippingAddress({ ...emptyAddress, name: user.email || '' });
@@ -167,22 +284,28 @@ export default function Checkout() {
   const subtotal = total;
   const shippingCost = selectedShipping.cost;
   const orderTotal = subtotal + shippingCost;
+  const activeOrderId = pendingPayment?.orderId || tempOrderId;
+  const paymentAmount = pendingPayment?.amount ?? orderTotal;
+  const paymentContactEmailSource = user?.email || pendingPayment?.email || guestEmail;
+  const paymentContactEmail = paymentContactEmailSource ? paymentContactEmailSource.trim() : undefined;
 
   async function handleCheckout(e: React.FormEvent) {
     e.preventDefault();
     setProcessing(true);
     setError('');
 
+    const normalizedGuestEmail = guestEmail.trim();
+
     try {
       if (items.length === 0) {
         throw new Error('Cart is empty');
       }
 
-      if (!user && !guestEmail) {
+      if (!user && !normalizedGuestEmail) {
         throw new Error('Please provide an email address');
       }
 
-      if (!user && guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
+      if (!user && normalizedGuestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedGuestEmail)) {
         throw new Error('Please provide a valid email address');
       }
 
@@ -231,8 +354,10 @@ export default function Checkout() {
         orderData.created_by = activeProfile.id;
       }
 
-      if (!user && guestEmail) {
-        orderData.notes = orderData.notes ? `${orderData.notes}\n\nGuest Email: ${guestEmail}` : `Guest Email: ${guestEmail}`;
+      if (!user && normalizedGuestEmail) {
+        orderData.notes = orderData.notes
+          ? `${orderData.notes}\n\nGuest Email: ${normalizedGuestEmail}`
+          : `Guest Email: ${normalizedGuestEmail}`;
       }
 
       const { data: order, error: orderError } = await supabase
@@ -275,6 +400,11 @@ export default function Checkout() {
       if (paymentMethod === 'card') {
         setTempOrderId(createdOrderId);
         setShowPayment(true);
+        persistPendingPayment({
+          orderId: createdOrderId,
+          amount: orderTotal,
+          email: user?.email || normalizedGuestEmail || undefined,
+        });
       } else {
         const { error: statusError } = await supabase
           .from('orders')
@@ -346,6 +476,7 @@ export default function Checkout() {
 
       setShowPayment(false);
       setTempOrderId('');
+      clearPendingPaymentStorage();
       clearCart();
       return data.orderId as string;
     } catch (err) {
@@ -818,16 +949,16 @@ export default function Checkout() {
               </div>
             </div>
 
-            {showPayment && (
+            {showPayment && activeOrderId && (
               <div className="bg-white rounded-lg border border-gray-200 p-6">
                 <div className="flex items-center gap-3 mb-6">
                   <CreditCard className="w-6 h-6 text-blue-600" />
                   <h2 className="text-xl font-bold text-gray-800">Complete Payment</h2>
                 </div>
                 <StripePayment
-                  amount={orderTotal}
-                  orderId={tempOrderId}
-                  customerEmail={user?.email || guestEmail}
+                  amount={paymentAmount}
+                  orderId={activeOrderId}
+                  customerEmail={paymentContactEmail}
                   onSuccess={handlePaymentSuccess}
                   onError={handlePaymentError}
                 />
