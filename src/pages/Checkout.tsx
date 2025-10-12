@@ -170,6 +170,7 @@ export default function Checkout() {
         po_number: poNumber || null,
         notes: orderNotes || null,
         placed_at: new Date().toISOString(),
+        payment_status: paymentMethod === 'card' ? 'pending' : 'terms',
       };
 
       if (user && profile?.id) {
@@ -207,6 +208,13 @@ export default function Checkout() {
         setTempOrderId(order.id);
         setShowPayment(true);
       } else {
+        const { error: statusError } = await supabase
+          .from('orders')
+          .update({ status: 'Confirmed', payment_status: 'terms' })
+          .eq('id', order.id);
+
+        if (statusError) throw statusError;
+
         setOrderId(order.id);
         setOrderComplete(true);
         clearCart();
@@ -218,63 +226,75 @@ export default function Checkout() {
     }
   }
 
-  async function handlePaymentReturn(paymentIntentId: string) {
+  async function finalizeStripePayment(paymentIntentId: string, options: { fromReturn?: boolean } = {}) {
+    const { fromReturn = false } = options;
+
     try {
-      setLoading(true);
-
-      const { data: orders, error: orderError } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('status', 'Pending')
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (orderError) throw orderError;
-
-      if (orders && orders.length > 0) {
-        const orderId = orders[0].id;
-
-        const { error: updateError } = await supabase
-          .from('orders')
-          .update({ status: 'Confirmed' })
-          .eq('id', orderId);
-
-        if (updateError) throw updateError;
-
-        setOrderId(orderId);
-        setOrderComplete(true);
-        clearCart();
-
-        window.history.replaceState({}, '', '/checkout');
+      setError('');
+      if (fromReturn) {
+        setLoading(true);
+      } else {
+        setProcessing(true);
       }
-    } catch (err) {
-      setError('Payment was processed but there was an error updating the order. Please contact support.');
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  async function handlePaymentSuccess() {
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'Confirmed' })
-        .eq('id', tempOrderId);
+      const { data: { session } } = await supabase.auth.getSession();
 
-      if (error) throw error;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
 
-      setOrderId(tempOrderId);
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-payment`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            action: 'finalize',
+            paymentIntentId,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to finalize payment.');
+      }
+
+      if (!data.orderId) {
+        throw new Error('Payment succeeded but we could not locate the related order. Please contact support.');
+      }
+
+      setOrderId(data.orderId);
       setShowPayment(false);
       setOrderComplete(true);
       clearCart();
     } catch (err) {
-      setError('Payment succeeded but order update failed. Please contact support with order ID: ' + tempOrderId);
+      setError(err instanceof Error ? err.message : 'Payment was processed but we could not confirm the order. Please contact support.');
+    } finally {
+      if (fromReturn) {
+        setLoading(false);
+      } else {
+        setProcessing(false);
+      }
     }
+  }
+
+  async function handlePaymentReturn(paymentIntentId: string) {
+    await finalizeStripePayment(paymentIntentId, { fromReturn: true });
+    window.history.replaceState({}, '', '/checkout');
+  }
+
+  async function handlePaymentSuccess(paymentIntentId: string) {
+    await finalizeStripePayment(paymentIntentId);
   }
 
   function handlePaymentError(errorMessage: string) {
     setError(errorMessage);
-    setShowPayment(false);
   }
 
   function updateBillingAddress(field: keyof Address, value: string) {
@@ -761,6 +781,7 @@ export default function Checkout() {
                 <StripePayment
                   amount={orderTotal}
                   orderId={tempOrderId}
+                  customerEmail={user?.email || guestEmail}
                   onSuccess={handlePaymentSuccess}
                   onError={handlePaymentError}
                 />

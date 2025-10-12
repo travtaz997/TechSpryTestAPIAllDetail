@@ -17,11 +17,43 @@ interface StagingItem {
   mfr_item_number: string;
   manufacturer: string;
   title: string;
+  description?: string | null;
   item_description?: string | null;
   catalog_name: string;
   category_path: string;
   item_status: string;
   item_image_url: string;
+  business_unit?: string | null;
+  product_family?: string | null;
+  product_family_description?: string | null;
+  product_family_headline?: string | null;
+  plant_material_status_valid_from?: string | null;
+  base_unit_of_measure?: string | null;
+  general_item_category_group?: string | null;
+  gross_weight?: number | null;
+  material_group?: string | null;
+  material_type?: string | null;
+  battery_indicator?: string | null;
+  rohs_compliance_indicator?: string | null;
+  manufacturer_division?: string | null;
+  commodity_import_code_number?: string | null;
+  country_of_origin?: string | null;
+  unspsc?: string | null;
+  delivering_plant?: string | null;
+  material_freight_group?: string | null;
+  minimum_order_quantity?: number | null;
+  salesperson_intervention_required?: boolean | null;
+  sell_via_edi?: boolean | null;
+  sell_via_web?: string | null;
+  serial_number_profile?: string | null;
+  packaged_length?: number | null;
+  packaged_width?: number | null;
+  packaged_height?: number | null;
+  date_added?: string | null;
+  rebox_item?: boolean | null;
+  b_stock_item?: boolean | null;
+  product_media?: { MediaType: string | null; URL: string | null }[] | null;
+  stock_available?: number | null;
   pricing_json: any;
   last_synced_at: string;
 }
@@ -519,39 +551,155 @@ export default function AdminScanSource() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {stagingItems.slice(0, 50).map((item) => (
-                    <div key={item.item_number} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
-                      <div className="flex gap-4">
-                        {item.item_image_url && (
-                          <img src={item.item_image_url} alt={item.title} className="w-16 h-16 object-cover rounded" />
-                        )}
-                        <div className="flex-1">
-                          <div className="font-semibold text-gray-800">{item.title}</div>
-                          <div className="text-sm text-gray-600">
-                            Item: {item.item_number} | MFR: {item.mfr_item_number}
-                          </div>
-                          <div className="text-sm text-gray-600">
-                            {item.manufacturer} | {item.category_path}
-                          </div>
-                          {item.item_description && (
-                            <div className="text-sm text-gray-500 mt-1 line-clamp-3">
-                              {item.item_description}
-                            </div>
+                  {stagingItems.slice(0, 50).map((item) => {
+                    const displayTitle = item.description || item.title || item.product_family_headline || item.item_number;
+                    const availability =
+                      typeof item.stock_available === 'number'
+                        ? item.stock_available
+                        : item.pricing_json?.AvailableQuantity ?? item.pricing_json?.availableQuantity ?? null;
+                    const msrpValue = Number(
+                      item.pricing_json?.msrp ?? item.pricing_json?.MSRP ?? item.pricing_json?.Msrp ?? NaN
+                    );
+                    return (
+                      <div key={item.item_number} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                        <div className="flex gap-4">
+                          {item.item_image_url && (
+                            <img src={item.item_image_url} alt={displayTitle} className="w-20 h-20 object-cover rounded" />
                           )}
-                          {item.pricing_json?.msrp && (
-                            <div className="text-sm font-semibold text-green-600 mt-1">
-                              MSRP: ${item.pricing_json.msrp.toFixed(2)}
+                          <div className="flex-1 space-y-2">
+                            <div>
+                              <div className="font-semibold text-gray-800 text-lg">{displayTitle}</div>
+                              <div className="text-sm text-gray-600">
+                                Item: {item.item_number} | MFR: {item.mfr_item_number || '—'}
+                              </div>
+                              <div className="text-sm text-gray-600 flex flex-wrap gap-2">
+                                <span>{item.manufacturer || 'Unknown manufacturer'}</span>
+                                {item.product_family && <span>• {item.product_family}</span>}
+                                {item.category_path && <span>• {item.category_path}</span>}
+                              </div>
+                              {item.item_description && (
+                                <div className="text-sm text-gray-500 mt-1 line-clamp-3">
+                                  {item.item_description}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <div className="text-right">
-                          <span className="inline-block px-2 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-800">
-                            {item.item_status}
-                          </span>
+
+                            <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                              <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">{item.item_status || 'Unknown'}</span>
+                              {typeof availability === 'number' && (
+                                <span className="px-2 py-1 rounded bg-green-100 text-green-700">Stock: {availability}</span>
+                              )}
+                              {item.business_unit && (
+                                <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">BU {item.business_unit}</span>
+                              )}
+                              {item.rebox_item && (
+                                <span className="px-2 py-1 rounded bg-orange-100 text-orange-700">Rebox</span>
+                              )}
+                              {item.b_stock_item && (
+                                <span className="px-2 py-1 rounded bg-yellow-100 text-yellow-700">B-Stock</span>
+                              )}
+                              {item.salesperson_intervention_required && (
+                                <span className="px-2 py-1 rounded bg-purple-100 text-purple-700">Sales Review</span>
+                              )}
+                              {item.sell_via_edi === false && (
+                                <span className="px-2 py-1 rounded bg-red-100 text-red-700">No EDI</span>
+                              )}
+                              {item.sell_via_edi === true && (
+                                <span className="px-2 py-1 rounded bg-green-100 text-green-700">EDI Enabled</span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 text-xs text-gray-600 sm:grid-cols-3">
+                              {item.base_unit_of_measure && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Base UOM</div>
+                                  <div>{item.base_unit_of_measure}</div>
+                                </div>
+                              )}
+                              {item.minimum_order_quantity != null && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">MOQ</div>
+                                  <div>{item.minimum_order_quantity}</div>
+                                </div>
+                              )}
+                              {item.gross_weight != null && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Gross Weight</div>
+                                  <div>{item.gross_weight} lb</div>
+                                </div>
+                              )}
+                              {(item.packaged_length || item.packaged_width || item.packaged_height) && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Dimensions (L×W×H)</div>
+                                  <div>
+                                    {[item.packaged_length, item.packaged_width, item.packaged_height]
+                                      .map((v) => (v != null ? v : '—'))
+                                      .join(' × ')}
+                                  </div>
+                                </div>
+                              )}
+                              {item.country_of_origin && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Origin</div>
+                                  <div>{item.country_of_origin}</div>
+                                </div>
+                              )}
+                              {item.unspsc && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">UNSPSC</div>
+                                  <div>{item.unspsc}</div>
+                                </div>
+                              )}
+                              {item.serial_number_profile && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Serial Profile</div>
+                                  <div>{item.serial_number_profile}</div>
+                                </div>
+                              )}
+                              {item.rohs_compliance_indicator && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">RoHS</div>
+                                  <div>{item.rohs_compliance_indicator}</div>
+                                </div>
+                              )}
+                              {item.battery_indicator && (
+                                <div>
+                                  <div className="font-semibold text-gray-700">Battery</div>
+                                  <div>{item.battery_indicator}</div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="text-xs text-gray-500 flex flex-wrap gap-4">
+                              {item.catalog_name && <div>Catalog: {item.catalog_name}</div>}
+                              {item.business_unit && <div>Business Unit: {item.business_unit}</div>}
+                              {item.delivering_plant && <div>Plant: {item.delivering_plant}</div>}
+                              {item.material_freight_group && <div>Freight: {item.material_freight_group}</div>}
+                              {item.material_group && <div>Material Group: {item.material_group}</div>}
+                              {item.material_type && <div>Material Type: {item.material_type}</div>}
+                              {item.sell_via_web && <div>Sell via Web: {item.sell_via_web}</div>}
+                              {item.plant_material_status_valid_from && (
+                                <div>
+                                  Status Effective: {new Date(item.plant_material_status_valid_from).toLocaleDateString()}
+                                </div>
+                              )}
+                              {item.date_added && <div>Added: {new Date(item.date_added).toLocaleDateString()}</div>}
+                            </div>
+
+                            {item.product_media && item.product_media.length > 0 && (
+                              <div className="text-xs text-blue-600">
+                                Media assets: {item.product_media.length}
+                              </div>
+                            )}
+
+                            {Number.isFinite(msrpValue) && (
+                              <div className="text-sm font-semibold text-green-600">MSRP: ${msrpValue.toFixed(2)}</div>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {stagingItems.length > 50 && (
                     <div className="text-center text-gray-500 text-sm py-4">Showing first 50 of {stagingItems.length} items</div>
                   )}
