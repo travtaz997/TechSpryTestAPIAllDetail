@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { Package, Plus, Search, CreditCard as Edit, Trash2 } from 'lucide-react';
@@ -26,10 +26,17 @@ export default function AdminProducts() {
   const [search, setSearch] = useState('');
   const [brandFilter, setBrandFilter] = useState('');
   const [publishedFilter, setPublishedFilter] = useState('all');
+  const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+
+  const visibleProductIds = useMemo(() => products.map((product) => product.id), [products]);
 
   useEffect(() => {
     loadData();
   }, [search, brandFilter, publishedFilter]);
+
+  useEffect(() => {
+    setSelectedProducts((current) => current.filter((id) => visibleProductIds.includes(id)));
+  }, [visibleProductIds]);
 
   async function loadData() {
     setLoading(true);
@@ -78,6 +85,40 @@ export default function AdminProducts() {
     }
   }
 
+  async function handleBulkDelete() {
+    if (selectedProducts.length === 0) return;
+
+    const confirmationMessage =
+      selectedProducts.length === 1
+        ? 'Are you sure you want to delete the selected product?'
+        : `Are you sure you want to delete ${selectedProducts.length} products? This cannot be undone.`;
+
+    if (!confirm(confirmationMessage)) return;
+
+    const { error } = await supabase.from('products').delete().in('id', selectedProducts);
+
+    if (error) {
+      alert('Error deleting products: ' + error.message);
+    } else {
+      setSelectedProducts([]);
+      loadData();
+    }
+  }
+
+  function toggleProductSelection(id: string) {
+    setSelectedProducts((current) =>
+      current.includes(id) ? current.filter((productId) => productId !== id) : [...current, id]
+    );
+  }
+
+  function toggleAllProducts() {
+    if (selectedProducts.length === visibleProductIds.length) {
+      setSelectedProducts([]);
+    } else {
+      setSelectedProducts(visibleProductIds);
+    }
+  }
+
   function getBrandName(brandId: string) {
     return brands.find((b) => b.id === brandId)?.name || 'Unknown';
   }
@@ -87,13 +128,31 @@ export default function AdminProducts() {
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800">Products</h1>
-          <a
-            href="/admin/products/new"
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold"
-          >
-            <Plus className="w-5 h-5" />
-            New Product
-          </a>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={selectedProducts.length === 0 || loading}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border transition font-semibold ${
+                selectedProducts.length === 0 || loading
+                  ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                  : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
+              }`}
+            >
+              <Trash2 className="w-5 h-5" />
+              Delete Selected
+              {selectedProducts.length > 0 && (
+                <span className="ml-1 text-sm font-normal">({selectedProducts.length})</span>
+              )}
+            </button>
+            <a
+              href="/admin/products/new"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-semibold"
+            >
+              <Plus className="w-5 h-5" />
+              New Product
+            </a>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
@@ -155,6 +214,15 @@ export default function AdminProducts() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                      onChange={toggleAllProducts}
+                      checked={visibleProductIds.length > 0 && selectedProducts.length === visibleProductIds.length}
+                      aria-label="Select all products"
+                    />
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     SKU
                   </th>
@@ -181,6 +249,15 @@ export default function AdminProducts() {
               <tbody className="divide-y divide-gray-200">
                 {products.map((product) => (
                   <tr key={product.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        checked={selectedProducts.includes(product.id)}
+                        onChange={() => toggleProductSelection(product.id)}
+                        aria-label={`Select product ${product.title}`}
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
                       {product.sku}
                     </td>
