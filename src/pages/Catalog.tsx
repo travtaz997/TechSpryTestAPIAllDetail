@@ -48,6 +48,11 @@ const slugify = (value: string) =>
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-');
 
+const normalizeCategorySlug = (value: string | null | undefined) => {
+  if (!value) return '';
+  return slugify(value);
+};
+
 const getProductCategorySlugs = (product: Product): string[] => {
   if (Array.isArray(product.category_slugs) && product.category_slugs.length > 0) {
     return product.category_slugs
@@ -70,9 +75,10 @@ export default function Catalog() {
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<CatalogFilters>(() => {
     const params = new URLSearchParams(window.location.search);
+    const categoryParam = params.get('category');
     return {
       brand: params.get('brand') ?? '',
-      category: params.get('category') ?? '',
+      category: normalizeCategorySlug(categoryParam),
       minPrice: params.get('minPrice') ?? '',
       maxPrice: params.get('maxPrice') ?? '',
       search: params.get('search') ?? '',
@@ -148,7 +154,13 @@ export default function Catalog() {
   }, [filteredProducts.length]);
 
   const updateFilters = (partial: Partial<CatalogFilters>) => {
-    setFilters(prev => ({ ...prev, ...partial }));
+    setFilters(prev => {
+      const normalized: Partial<CatalogFilters> = { ...partial };
+      if (partial.category !== undefined) {
+        normalized.category = normalizeCategorySlug(partial.category);
+      }
+      return { ...prev, ...normalized };
+    });
     setCurrentPage(1);
   };
 
@@ -186,8 +198,9 @@ export default function Catalog() {
         query = query.eq('brand_id', selectedBrand.id);
       }
 
-      if (filters.category) {
-        query = query.overlaps('category_slugs', [filters.category]);
+      const categorySlug = normalizeCategorySlug(filters.category);
+      if (categorySlug) {
+        query = query.contains('category_slugs', [categorySlug]);
       }
 
       const trimmedSearch = filters.search.trim();
@@ -241,7 +254,8 @@ export default function Catalog() {
       const categories = getProductCategorySlugs(product);
 
       if (brandId && product.brand_id !== brandId) return false;
-      if (filters.category && !categories.includes(filters.category)) return false;
+      const selectedCategorySlug = normalizeCategorySlug(filters.category);
+      if (selectedCategorySlug && !categories.includes(selectedCategorySlug)) return false;
       if (hasMin && salePrice < min) return false;
       if (hasMax && salePrice > max) return false;
       if (!searchTerm) return true;
