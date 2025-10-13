@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import AdminLayout from '../../components/admin/AdminLayout';
-import { Package, Plus, Search, CreditCard as Edit, Trash2 } from 'lucide-react';
+import { Package, Plus, Search, CreditCard as Edit, Trash2, X } from 'lucide-react';
 
 interface Product {
   id: string;
   sku: string;
   title: string;
-  brand_id: string;
+  brand_id: string | null;
+  manufacturer: string | null;
   published: boolean;
   stock_status: string;
   map_price: number;
@@ -16,6 +17,7 @@ interface Product {
   price_adjustment_type: string | null;
   price_adjustment_value: number | null;
   updated_at: string;
+  categories: string[] | null;
 }
 
 interface Brand {
@@ -23,24 +25,60 @@ interface Brand {
   name: string;
 }
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 export default function AdminProducts() {
   const [products, setProducts] = useState<Product[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [brandFilter, setBrandFilter] = useState('');
   const [publishedFilter, setPublishedFilter] = useState('all');
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [isApplyingCategories, setIsApplyingCategories] = useState(false);
+
+  const pageSize = 25;
 
   const visibleProductIds = useMemo(() => products.map((product) => product.id), [products]);
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const startItem = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endItem = totalCount === 0 ? 0 : Math.min(totalCount, (page - 1) * pageSize + products.length);
+
+  const filteredCategories = useMemo(() => {
+    const query = categorySearch.trim().toLowerCase();
+    if (!query) return categories;
+    return categories.filter((category) => category.name.toLowerCase().includes(query));
+  }, [categories, categorySearch]);
 
   useEffect(() => {
     loadData();
-  }, [search, brandFilter, publishedFilter]);
+  }, [search, brandFilter, publishedFilter, page]);
 
   useEffect(() => {
-    setSelectedProducts((current) => current.filter((id) => visibleProductIds.includes(id)));
-  }, [visibleProductIds]);
+    async function loadCategories() {
+      const { data, error } = await supabase.from('categories').select('id, name').order('name');
+      if (error) {
+        console.error('Error loading categories:', error);
+        return;
+      }
+      setCategories(data ?? []);
+    }
+
+    loadCategories();
+  }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, brandFilter, publishedFilter]);
 
   async function loadData() {
     setLoading(true);
@@ -52,6 +90,7 @@ export default function AdminProducts() {
 
       if (brandsResult.data) setBrands(brandsResult.data);
       if (productsQuery.data) setProducts(productsQuery.data);
+      if (typeof productsQuery.count === 'number') setTotalCount(productsQuery.count);
     } catch (error) {
       console.error('Error loading products:', error);
     } finally {
@@ -60,7 +99,14 @@ export default function AdminProducts() {
   }
 
   function buildProductsQuery() {
-    let query = supabase.from('products').select('*').order('updated_at', { ascending: false });
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from('products')
+      .select('*', { count: 'exact' })
+      .order('updated_at', { ascending: false })
+      .range(from, to);
 
     if (search) {
       query = query.or(`title.ilike.%${search}%,sku.ilike.%${search}%`);
@@ -74,7 +120,7 @@ export default function AdminProducts() {
       query = query.eq('published', publishedFilter === 'published');
     }
 
-    return query.limit(100);
+    return query;
   }
 
   async function handleDelete(id: string) {
@@ -116,15 +162,91 @@ export default function AdminProducts() {
   }
 
   function toggleAllProducts() {
-    if (selectedProducts.length === visibleProductIds.length) {
-      setSelectedProducts([]);
+    const allVisibleSelected =
+      visibleProductIds.length > 0 && visibleProductIds.every((id) => selectedProducts.includes(id));
+
+    if (allVisibleSelected) {
+      setSelectedProducts((current) => current.filter((id) => !visibleProductIds.includes(id)));
     } else {
-      setSelectedProducts(visibleProductIds);
+      setSelectedProducts((current) => Array.from(new Set([...current, ...visibleProductIds])));
     }
   }
 
-  function getBrandName(brandId: string) {
-    return brands.find((b) => b.id === brandId)?.name || 'Unknown';
+  function getBrandName(brandId: string | null | undefined) {
+    if (!brandId) return '';
+    return brands.find((b) => b.id === brandId)?.name || '';
+  }
+
+  function getManufacturerDisplay(product: Product) {
+    return product.manufacturer || getBrandName(product.brand_id) || 'Unknown';
+  }
+
+  function handlePageChange(newPage: number) {
+    if (newPage < 1 || newPage > totalPages) return;
+    setPage(newPage);
+  }
+
+  function toggleCategorySelection(id: string) {
+    setSelectedCategoryIds((current) =>
+      current.includes(id) ? current.filter((categoryId) => categoryId !== id) : [...current, id]
+    );
+  }
+
+  function openCategoryModal() {
+    setSelectedCategoryIds([]);
+    setCategorySearch('');
+    setIsCategoryModalOpen(true);
+  }
+
+  async function handleApplyCategories() {
+    if (selectedCategoryIds.length === 0) return;
+
+    setIsApplyingCategories(true);
+    const errors: string[] = [];
+
+    for (const productId of selectedProducts) {
+      let existingCategories: string[] = [];
+      const product = products.find((p) => p.id === productId);
+
+      if (product && Array.isArray(product.categories)) {
+        existingCategories = product.categories;
+      } else {
+        const { data, error } = await supabase
+          .from('products')
+          .select('categories')
+          .eq('id', productId)
+          .maybeSingle();
+
+        if (error) {
+          errors.push(`Error loading product ${productId}: ${error.message}`);
+          continue;
+        }
+
+        existingCategories = (data?.categories as string[] | null) ?? [];
+      }
+
+      const updatedCategories = Array.from(new Set([...existingCategories, ...selectedCategoryIds]));
+
+      const { error: updateError } = await supabase
+        .from('products')
+        .update({ categories: updatedCategories })
+        .eq('id', productId);
+
+      if (updateError) {
+        errors.push(`Error updating product ${productId}: ${updateError.message}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      alert(errors.join('\n'));
+    } else {
+      setIsCategoryModalOpen(false);
+      setSelectedCategoryIds([]);
+      setSelectedProducts([]);
+      await loadData();
+    }
+
+    setIsApplyingCategories(false);
   }
 
   return (
@@ -133,6 +255,21 @@ export default function AdminProducts() {
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800">Products</h1>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={openCategoryModal}
+              disabled={selectedProducts.length === 0 || loading}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border transition font-semibold ${
+                selectedProducts.length === 0 || loading
+                  ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                  : 'bg-green-50 text-green-600 border-green-200 hover:bg-green-100'
+              }`}
+            >
+              Add Category
+              {selectedProducts.length > 0 && (
+                <span className="ml-1 text-sm font-normal">({selectedProducts.length})</span>
+              )}
+            </button>
             <button
               type="button"
               onClick={handleBulkDelete}
@@ -219,13 +356,16 @@ export default function AdminProducts() {
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                      onChange={toggleAllProducts}
-                      checked={visibleProductIds.length > 0 && selectedProducts.length === visibleProductIds.length}
-                      aria-label="Select all products"
-                    />
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                        onChange={toggleAllProducts}
+                        checked={
+                          visibleProductIds.length > 0 &&
+                          visibleProductIds.every((id) => selectedProducts.includes(id))
+                        }
+                        aria-label="Select all products"
+                      />
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     SKU
@@ -234,7 +374,7 @@ export default function AdminProducts() {
                     Title
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Brand
+                    Manufacturer
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Pricing
@@ -273,7 +413,7 @@ export default function AdminProducts() {
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-800">{product.title}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {getBrandName(product.brand_id)}
+                        {getManufacturerDisplay(product)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">
                         <div className="font-semibold text-gray-800">
@@ -332,9 +472,131 @@ export default function AdminProducts() {
           </div>
         )}
 
-        <div className="mt-4 text-sm text-gray-600">
-          Showing {products.length} product{products.length !== 1 ? 's' : ''}
+        <div className="mt-4 flex flex-col gap-2 text-sm text-gray-600 md:flex-row md:items-center md:justify-between">
+          <div>
+            Showing
+            <span className="font-semibold mx-1">
+              {totalCount === 0 ? 0 : `${startItem}-${endItem}`}
+            </span>
+            of <span className="font-semibold">{totalCount}</span> product{totalCount === 1 ? '' : 's'}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handlePageChange(page - 1)}
+              disabled={page === 1 || loading}
+              className={`px-3 py-1 rounded border ${
+                page === 1 || loading
+                  ? 'text-gray-400 border-gray-200 bg-gray-100 cursor-not-allowed'
+                  : 'text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Previous
+            </button>
+            <span>
+              Page <span className="font-semibold">{page}</span> of{' '}
+              <span className="font-semibold">{isFinite(totalPages) ? totalPages : 1}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => handlePageChange(page + 1)}
+              disabled={page >= totalPages || loading}
+              className={`px-3 py-1 rounded border ${
+                page >= totalPages || loading
+                  ? 'text-gray-400 border-gray-200 bg-gray-100 cursor-not-allowed'
+                  : 'text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Next
+            </button>
+          </div>
         </div>
+
+        {isCategoryModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-50 p-4">
+            <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
+              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+                <h2 className="text-lg font-semibold text-gray-800">Add Categories</h2>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                  aria-label="Close"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="px-6 py-4">
+                <p className="mb-4 text-sm text-gray-600">
+                  Select categories to add to {selectedProducts.length} product
+                  {selectedProducts.length === 1 ? '' : 's'}.
+                </p>
+                <div className="mb-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      value={categorySearch}
+                      onChange={(event) => setCategorySearch(event.target.value)}
+                      placeholder="Search categories..."
+                      className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-64 space-y-2 overflow-y-auto pr-2">
+                  {filteredCategories.length === 0 ? (
+                    <div className="text-sm text-gray-500">No categories found.</div>
+                  ) : (
+                    filteredCategories.map((category) => (
+                      <label key={category.id} className="flex items-center gap-3 rounded border border-gray-200 px-3 py-2 hover:border-blue-200">
+                        <input
+                          type="checkbox"
+                          checked={selectedCategoryIds.includes(category.id)}
+                          onChange={() => toggleCategorySelection(category.id)}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">{category.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-6 py-4">
+                <button
+                  type="button"
+                  className="text-sm font-medium text-gray-500 hover:text-gray-700"
+                  onClick={() => {
+                    setSelectedCategoryIds([]);
+                    setCategorySearch('');
+                  }}
+                >
+                  Clear selection
+                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(false)}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyCategories}
+                    disabled={selectedCategoryIds.length === 0 || isApplyingCategories}
+                    className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+                      selectedCategoryIds.length === 0 || isApplyingCategories
+                        ? 'bg-blue-200 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    {isApplyingCategories ? 'Applying...' : 'Apply Categories'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AdminLayout>
   );

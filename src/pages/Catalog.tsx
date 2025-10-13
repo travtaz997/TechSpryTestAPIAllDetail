@@ -8,7 +8,7 @@ import { getHeroImage } from '../utils/productMedia';
 import { useCatalogCategories } from '../contexts/CatalogCategoryContext';
 
 type Product = Database['public']['Tables']['products']['Row'];
-type Brand = Database['public']['Tables']['brands']['Row'];
+type BrandSummary = Pick<Database['public']['Tables']['brands']['Row'], 'id' | 'name' | 'slug'>;
 
 type CatalogFilters = {
   brand: string;
@@ -44,7 +44,7 @@ const PAGE_SIZE = 24;
 
 export default function Catalog() {
   const [rawProducts, setRawProducts] = useState<Product[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
+  const [brands, setBrands] = useState<BrandSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<CatalogFilters>(() => {
@@ -66,7 +66,7 @@ export default function Catalog() {
   const { items: catalogCategories } = useCatalogCategories();
 
   const brandLookup = useMemo(() => {
-    const map = new Map<string, Brand>();
+    const map = new Map<string, BrandSummary>();
     for (const brand of brands) {
       map.set(brand.id, brand);
     }
@@ -148,7 +148,12 @@ export default function Catalog() {
       console.error('Error loading brands:', error);
       return;
     }
-    setBrands(data ?? []);
+    const normalizedBrands: BrandSummary[] = (data ?? []).map(brand => ({
+      id: brand.id,
+      name: brand.name,
+      slug: brand.slug,
+    }));
+    setBrands(normalizedBrands);
   }
 
   async function loadProducts() {
@@ -220,7 +225,10 @@ export default function Catalog() {
       if (hasMax && salePrice > max) return false;
       if (!searchTerm) return true;
 
-      const brandName = brandLookup.get(product.brand_id)?.name ?? product.manufacturer ?? '';
+      const brandName =
+        (product.brand_id ? brandLookup.get(product.brand_id)?.name : undefined) ??
+        product.manufacturer ??
+        '';
       const categoryLabels = categories.map(slug => categoryMap.get(slug)?.label ?? toTitleCase(slug));
       const tags = Array.isArray(product.tags) ? product.tags : [];
       const specValues =
@@ -254,7 +262,7 @@ export default function Catalog() {
   }
 
   function handleAddToCart(product: Product) {
-    const brand = brandLookup.get(product.brand_id);
+    const brand = product.brand_id ? brandLookup.get(product.brand_id) : undefined;
     const image = getHeroImage(product) ?? '';
 
     addItem({
@@ -466,7 +474,10 @@ export default function Catalog() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {paginatedProducts.map(product => {
-                const brandName = brandLookup.get(product.brand_id)?.name ?? product.manufacturer ?? 'TechSpry';
+                const brandName =
+                  (product.brand_id ? brandLookup.get(product.brand_id)?.name : undefined) ??
+                  product.manufacturer ??
+                  'TechSpry';
                 const productImage = getHeroImage(product) ?? FALLBACK_PRODUCT_IMAGE;
                 const formattedPrice = formatCurrency(product.sale_price ?? product.map_price);
                 const stockLabel = product.stock_status || product.item_status || 'Check availability';

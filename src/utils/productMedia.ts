@@ -1,4 +1,4 @@
-import type { Database } from '../lib/database.types';
+import type { Database, Json } from '../lib/database.types';
 
 export type ProductRow = Database['public']['Tables']['products']['Row'];
 
@@ -17,7 +17,10 @@ const normalizeString = (value: unknown): string | null => {
 export const normalizeMedia = (media: ProductRow['product_media']): ProductMediaItem[] => {
   if (!media || !Array.isArray(media)) return [];
   return media
-    .filter((item): item is ProductMediaItem => !!item && typeof item === 'object')
+    .filter(
+      (item): item is { [key: string]: Json | undefined } =>
+        !!item && typeof item === 'object' && !Array.isArray(item)
+    )
     .map(item => item as ProductMediaItem);
 };
 
