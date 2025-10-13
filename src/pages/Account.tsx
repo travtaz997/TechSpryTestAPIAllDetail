@@ -430,6 +430,11 @@ export default function Account() {
 
     try {
       const companyName = profileForm.businessName.trim() || customer?.company || '';
+      const billingAddressRecord: Record<string, unknown> = { ...billingAddress };
+      const shippingAddressRecord: Record<string, unknown> = {
+        ...(sameAsBilling ? billingAddress : shippingAddress),
+      };
+
       const application: NetTermsApplication = {
         legalBusinessName: companyName,
         contactName: `${profileForm.firstName} ${profileForm.lastName}`.trim(),
@@ -439,8 +444,8 @@ export default function Account() {
         estimatedMonthlySpend: netTermsForm.estimatedMonthlySpend.trim(),
         taxId: netTermsForm.taxId.trim(),
         notes: netTermsForm.notes.trim() || undefined,
-        billingAddress: billingAddress,
-        shippingAddress: sameAsBilling ? billingAddress : shippingAddress,
+        billingAddress: billingAddressRecord,
+        shippingAddress: shippingAddressRecord,
       };
 
       const { error: updateError } = await supabase
