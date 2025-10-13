@@ -28,6 +28,7 @@ interface Brand {
 interface Category {
   id: string;
   name: string;
+  slug: string;
 }
 
 export default function AdminProducts() {
@@ -42,7 +43,7 @@ export default function AdminProducts() {
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [selectedCategorySlugs, setSelectedCategorySlugs] = useState<string[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
   const [isApplyingCategories, setIsApplyingCategories] = useState(false);
 
@@ -56,7 +57,9 @@ export default function AdminProducts() {
   const filteredCategories = useMemo(() => {
     const query = categorySearch.trim().toLowerCase();
     if (!query) return categories;
-    return categories.filter((category) => category.name.toLowerCase().includes(query));
+    return categories.filter(category =>
+      `${category.name} ${category.slug}`.toLowerCase().includes(query),
+    );
   }, [categories, categorySearch]);
 
   useEffect(() => {
@@ -65,12 +68,20 @@ export default function AdminProducts() {
 
   useEffect(() => {
     async function loadCategories() {
-      const { data, error } = await supabase.from('categories').select('id, name').order('name');
+      const { data, error } = await supabase.from('categories').select('id, name, slug').order('name');
       if (error) {
         console.error('Error loading categories:', error);
         return;
       }
-      setCategories(data ?? []);
+      setCategories(
+        (data ?? [])
+          .map(category => ({
+            id: category.id,
+            name: category.name,
+            slug: typeof category.slug === 'string' ? category.slug.trim() : '',
+          }))
+          .filter(category => category.slug),
+      );
     }
 
     loadCategories();
@@ -186,20 +197,25 @@ export default function AdminProducts() {
     setPage(newPage);
   }
 
-  function toggleCategorySelection(id: string) {
-    setSelectedCategoryIds((current) =>
-      current.includes(id) ? current.filter((categoryId) => categoryId !== id) : [...current, id]
+  function toggleCategorySelection(slug: string) {
+    const normalized = slug.trim();
+    if (!normalized) return;
+
+    setSelectedCategorySlugs(current =>
+      current.includes(normalized)
+        ? current.filter(categorySlug => categorySlug !== normalized)
+        : [...current, normalized],
     );
   }
 
   function openCategoryModal() {
-    setSelectedCategoryIds([]);
+    setSelectedCategorySlugs([]);
     setCategorySearch('');
     setIsCategoryModalOpen(true);
   }
 
   async function handleApplyCategories() {
-    if (selectedCategoryIds.length === 0) return;
+    if (selectedCategorySlugs.length === 0) return;
 
     setIsApplyingCategories(true);
     const errors: string[] = [];
@@ -225,7 +241,12 @@ export default function AdminProducts() {
         existingCategories = (data?.categories as string[] | null) ?? [];
       }
 
-      const updatedCategories = Array.from(new Set([...existingCategories, ...selectedCategoryIds]));
+      const sanitizedExisting = existingCategories.filter(
+        (category): category is string => typeof category === 'string' && category.trim() !== '',
+      );
+      const updatedCategories = Array.from(
+        new Set([...sanitizedExisting, ...selectedCategorySlugs.map(slug => slug.trim())]),
+      );
 
       const { error: updateError } = await supabase
         .from('products')
@@ -241,7 +262,7 @@ export default function AdminProducts() {
       alert(errors.join('\n'));
     } else {
       setIsCategoryModalOpen(false);
-      setSelectedCategoryIds([]);
+      setSelectedCategorySlugs([]);
       setSelectedProducts([]);
       await loadData();
     }
@@ -551,8 +572,8 @@ export default function AdminProducts() {
                       <label key={category.id} className="flex items-center gap-3 rounded border border-gray-200 px-3 py-2 hover:border-blue-200">
                         <input
                           type="checkbox"
-                          checked={selectedCategoryIds.includes(category.id)}
-                          onChange={() => toggleCategorySelection(category.id)}
+                          checked={selectedCategorySlugs.includes(category.slug)}
+                          onChange={() => toggleCategorySelection(category.slug)}
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                         <span className="text-sm text-gray-700">{category.name}</span>
@@ -566,7 +587,7 @@ export default function AdminProducts() {
                   type="button"
                   className="text-sm font-medium text-gray-500 hover:text-gray-700"
                   onClick={() => {
-                    setSelectedCategoryIds([]);
+                    setSelectedCategorySlugs([]);
                     setCategorySearch('');
                   }}
                 >
@@ -583,9 +604,9 @@ export default function AdminProducts() {
                   <button
                     type="button"
                     onClick={handleApplyCategories}
-                    disabled={selectedCategoryIds.length === 0 || isApplyingCategories}
+                    disabled={selectedCategorySlugs.length === 0 || isApplyingCategories}
                     className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
-                      selectedCategoryIds.length === 0 || isApplyingCategories
+                      selectedCategorySlugs.length === 0 || isApplyingCategories
                         ? 'bg-blue-200 cursor-not-allowed'
                         : 'bg-blue-600 hover:bg-blue-700'
                     }`}
