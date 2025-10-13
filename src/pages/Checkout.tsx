@@ -270,6 +270,8 @@ export default function Checkout() {
       return;
     }
 
+    const authenticatedUser = user;
+
     async function loadCustomer() {
       try {
         setLoading(true);
@@ -277,9 +279,9 @@ export default function Checkout() {
 
         if (!customerId) {
           setCustomer(null);
-          if (user.email) {
-            setBillingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
-            setShippingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+          if (authenticatedUser.email) {
+            setBillingAddress((prev) => ({ ...prev, name: prev.name || authenticatedUser.email || '' }));
+            setShippingAddress((prev) => ({ ...prev, name: prev.name || authenticatedUser.email || '' }));
           }
           return;
         }
@@ -299,15 +301,21 @@ export default function Checkout() {
 
         if (customerRecord?.billing_address && Object.keys(customerRecord.billing_address).length > 0) {
           setBillingAddress({ ...emptyAddress, ...customerRecord.billing_address });
-        } else if (user.email) {
-          setBillingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+        } else if (authenticatedUser.email) {
+          setBillingAddress((prev) => ({
+            ...prev,
+            name: prev.name || authenticatedUser.email || '',
+          }));
         }
 
         if (customerRecord?.shipping_address && Object.keys(customerRecord.shipping_address).length > 0) {
           setShippingAddress({ ...emptyAddress, ...customerRecord.shipping_address });
           setSameAsBilling(false);
-        } else if (user.email) {
-          setShippingAddress((prev) => ({ ...prev, name: prev.name || user.email || '' }));
+        } else if (authenticatedUser.email) {
+          setShippingAddress((prev) => ({
+            ...prev,
+            name: prev.name || authenticatedUser.email || '',
+          }));
         }
       } catch (err) {
         console.error('Failed to load customer details:', err);
