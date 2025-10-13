@@ -92,7 +92,7 @@ export default function Catalog() {
   useEffect(() => {
     if (brands.length === 0) return;
     void loadProducts();
-  }, [brands, filters.brand, filters.category]);
+  }, [brands, filters.brand, filters.category, filters.search]);
 
   useEffect(() => {
     if (window.location.pathname !== '/catalog') return;
@@ -162,6 +162,28 @@ export default function Catalog() {
 
       if (filters.category) {
         query = query.overlaps('categories', [filters.category]);
+      }
+
+      const trimmedSearch = filters.search.trim();
+      if (trimmedSearch) {
+        const sanitizedSearch = trimmedSearch
+          .replace(/[%_]/g, '')
+          .replace(/[,']/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (sanitizedSearch) {
+          const searchPattern = `%${sanitizedSearch}%`;
+          const orFilters = [
+            `title.ilike.${searchPattern}`,
+            `sku.ilike.${searchPattern}`,
+            `model.ilike.${searchPattern}`,
+            `manufacturer_item_number.ilike.${searchPattern}`,
+            `short_desc.ilike.${searchPattern}`,
+            `long_desc.ilike.${searchPattern}`,
+          ].join(',');
+          query = query.or(orFilters);
+        }
       }
 
       const { data, error } = await query.order('title').limit(120);
