@@ -89,6 +89,27 @@ export default function Catalog() {
     void loadBrands();
   }, []);
 
+  const brandMap = useMemo(() => {
+    const map = new Map<string, Brand>();
+    for (const brand of brands) {
+      map.set(brand.id, brand);
+    }
+    return map;
+  }, [brands]);
+
+  const categoryMap = useMemo(() => new Map(catalogCategories.map(category => [category.slug, category])), []);
+
+  const selectedBrand = useMemo(
+    () => (filters.brand ? brands.find(brand => brand.slug === filters.brand) ?? null : null),
+    [filters.brand, brands],
+  );
+
+  const activeCategory = filters.category ? categoryMap.get(filters.category) : undefined;
+
+  useEffect(() => {
+    void loadBrands();
+  }, []);
+
   useEffect(() => {
     if (brands.length === 0) return;
     void loadProducts();
