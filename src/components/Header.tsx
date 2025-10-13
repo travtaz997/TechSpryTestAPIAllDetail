@@ -2,8 +2,8 @@ import { ShoppingCart, User, Search, Menu, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
-import { catalogCategories } from '../utils/catalogCategories';
 import { useNavigationMenu } from '../contexts/NavigationContext';
+import { useCatalogCategories } from '../contexts/CatalogCategoryContext';
 
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -13,6 +13,7 @@ export default function Header() {
   const { user, signOut } = useAuth();
   const { itemCount } = useCart();
   const { items: navigationMenu } = useNavigationMenu();
+  const { items: catalogCategories } = useCatalogCategories();
 
   useEffect(() => {
     return () => {

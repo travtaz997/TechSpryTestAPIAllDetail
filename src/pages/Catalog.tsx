@@ -4,8 +4,8 @@ import { Filter, ShoppingCart } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useCart } from '../contexts/CartContext';
 import type { Database } from '../lib/database.types';
-import { catalogCategories } from '../utils/catalogCategories';
 import { getHeroImage } from '../utils/productMedia';
+import { useCatalogCategories } from '../contexts/CatalogCategoryContext';
 
 type Product = Database['public']['Tables']['products']['Row'];
 type Brand = Database['public']['Tables']['brands']['Row'];
@@ -63,6 +63,31 @@ export default function Catalog() {
     return Number.isNaN(pageParam) ? 1 : Math.max(1, pageParam);
   });
   const { addItem } = useCart();
+  const { items: catalogCategories } = useCatalogCategories();
+
+  const brandMap = useMemo(() => {
+    const map = new Map<string, Brand>();
+    for (const brand of brands) {
+      map.set(brand.id, brand);
+    }
+    return map;
+  }, [brands]);
+
+  const categoryMap = useMemo(
+    () => new Map(catalogCategories.map(category => [category.slug, category])),
+    [catalogCategories],
+  );
+
+  const selectedBrand = useMemo(
+    () => (filters.brand ? brands.find(brand => brand.slug === filters.brand) ?? null : null),
+    [filters.brand, brands],
+  );
+
+  const activeCategory = filters.category ? categoryMap.get(filters.category) : undefined;
+
+  useEffect(() => {
+    void loadBrands();
+  }, []);
 
   const brandMap = useMemo(() => {
     const map = new Map<string, Brand>();
@@ -88,7 +113,7 @@ export default function Catalog() {
   useEffect(() => {
     if (brands.length === 0) return;
     void loadProducts();
-  }, [brands, filters.brand, filters.category]);
+  }, [brands, filters.brand, filters.category, filters.search]);
 
   useEffect(() => {
     if (window.location.pathname !== '/catalog') return;
@@ -158,6 +183,28 @@ export default function Catalog() {
 
       if (filters.category) {
         query = query.overlaps('categories', [filters.category]);
+      }
+
+      const trimmedSearch = filters.search.trim();
+      if (trimmedSearch) {
+        const sanitizedSearch = trimmedSearch
+          .replace(/[%_]/g, '')
+          .replace(/[,']/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (sanitizedSearch) {
+          const searchPattern = `%${sanitizedSearch}%`;
+          const orFilters = [
+            `title.ilike.${searchPattern}`,
+            `sku.ilike.${searchPattern}`,
+            `model.ilike.${searchPattern}`,
+            `manufacturer_item_number.ilike.${searchPattern}`,
+            `short_desc.ilike.${searchPattern}`,
+            `long_desc.ilike.${searchPattern}`,
+          ].join(',');
+          query = query.or(orFilters);
+        }
       }
 
       const { data, error } = await query.order('title').limit(120);

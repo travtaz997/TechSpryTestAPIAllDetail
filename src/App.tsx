@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import { Router } from './utils/router';
 import { useEffect, useState } from 'react';
 import { NavigationProvider } from './contexts/NavigationContext';
+import { CatalogCategoryProvider } from './contexts/CatalogCategoryContext';
 
 function App() {
   const [mounted, setMounted] = useState(false);
@@ -27,9 +28,11 @@ function App() {
     <AuthProvider>
       <CartProvider>
         <NavigationProvider>
-          <Layout>
-            <Router />
-          </Layout>
+          <CatalogCategoryProvider>
+            <Layout>
+              <Router />
+            </Layout>
+          </CatalogCategoryProvider>
         </NavigationProvider>
       </CartProvider>
     </AuthProvider>
