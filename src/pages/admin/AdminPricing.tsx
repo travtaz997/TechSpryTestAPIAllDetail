@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BadgeDollarSign,
   CheckCircle2,
+  Download,
   Loader2,
   RefreshCcw,
   Search,
@@ -16,6 +17,7 @@ interface PricingProduct {
   id: string;
   sku: string;
   title: string;
+  manufacturer: string | null;
   msrp: number | null;
   map_price: number | null;
   reseller_price: number | null;
@@ -88,6 +90,7 @@ export default function AdminPricing() {
   const [formState, setFormState] = useState<PricingFormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -100,7 +103,7 @@ export default function AdminPricing() {
       const { data, error: queryError } = await supabase
         .from('products')
         .select(
-          'id, sku, title, msrp, map_price, sale_price, reseller_price, price_adjustment_type, price_adjustment_value, updated_at, published'
+          'id, sku, title, manufacturer, msrp, map_price, sale_price, reseller_price, price_adjustment_type, price_adjustment_value, updated_at, published'
         )
         .order('updated_at', { ascending: false })
         .limit(200);
@@ -307,6 +310,91 @@ export default function AdminPricing() {
     return { reseller, sale, markup, fees, profit };
   }, [formState]);
 
+  function getManufacturerName(product: PricingProduct): string {
+    if (product.manufacturer && product.manufacturer.trim()) {
+      return product.manufacturer;
+    }
+    return 'Unknown';
+  }
+
+  function escapeCell(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function buildExcelRow(columns: string[]): string {
+    return `<tr>${columns.map((column) => `<td>${column}</td>`).join('')}</tr>`;
+  }
+
+  function buildExcelHeader(columns: string[]): string {
+    return `<tr>${columns.map((column) => `<th>${column}</th>`).join('')}</tr>`;
+  }
+
+  function formatCurrencyCell(value: number): string {
+    return escapeCell(formatCurrency(value));
+  }
+
+  function handleExportPricing() {
+    if (filteredProducts.length === 0) {
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      const header = [
+        'SKU',
+        'Item Name',
+        'Manufacturer',
+        'Reseller Price',
+        'Customer Sale Price',
+        'Markup / Loss',
+        'Card Processing Fee',
+        'Projected Profit / Loss',
+      ];
+
+      const rows = filteredProducts.map((product) => {
+        const reseller = Number(product.reseller_price ?? product.map_price ?? 0);
+        const sale = Number(product.sale_price ?? product.map_price ?? 0);
+        const markup = sale - reseller;
+        const fees = sale > 0 ? sale * CARD_RATE + CARD_FIXED_FEE : 0;
+        const profit = sale - reseller - fees;
+
+        return buildExcelRow([
+          escapeCell(product.sku || ''),
+          escapeCell(product.title || ''),
+          escapeCell(getManufacturerName(product)),
+          formatCurrencyCell(reseller),
+          formatCurrencyCell(sale),
+          formatCurrencyCell(markup),
+          formatCurrencyCell(fees),
+          formatCurrencyCell(profit),
+        ]);
+      });
+
+      const table = `<!DOCTYPE html><html><head><meta charset="utf-8" /></head><body><table>${buildExcelHeader(
+        header.map((column) => escapeCell(column))
+      )}${rows.join('')}</table></body></html>`;
+
+      const blob = new Blob([`\ufeff${table}`], { type: 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.href = url;
+      link.download = `pricing-export-${timestamp}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <AdminLayout>
       <div className="max-w-7xl mx-auto">
@@ -320,15 +408,35 @@ export default function AdminPricing() {
               Manage customer sale pricing, markups, and profitability safeguards.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={loadProducts}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <RefreshCcw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleExportPricing}
+              disabled={exporting || filteredProducts.length === 0}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 text-blue-600" />
+                  Export Pricing
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={loadProducts}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCcw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-12">
