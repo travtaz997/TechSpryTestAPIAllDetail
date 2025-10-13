@@ -3,6 +3,8 @@ import { CartProvider } from './contexts/CartContext';
 import Layout from './components/Layout';
 import { Router } from './utils/router';
 import { useEffect, useState } from 'react';
+import { NavigationProvider } from './contexts/NavigationContext';
+import { CatalogCategoryProvider } from './contexts/CatalogCategoryContext';
 
 function App() {
   const [mounted, setMounted] = useState(false);
@@ -25,9 +27,13 @@ function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <Layout>
-          <Router />
-        </Layout>
+        <NavigationProvider>
+          <CatalogCategoryProvider>
+            <Layout>
+              <Router />
+            </Layout>
+          </CatalogCategoryProvider>
+        </NavigationProvider>
       </CartProvider>
     </AuthProvider>
   );
