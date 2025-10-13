@@ -40,6 +40,27 @@ const toTitleCase = (value: string) =>
     .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
 
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+const getProductCategorySlugs = (product: Product): string[] => {
+  if (Array.isArray(product.category_slugs) && product.category_slugs.length > 0) {
+    return product.category_slugs
+      .map(slug => (typeof slug === 'string' ? slug.trim() : ''))
+      .filter(Boolean);
+  }
+
+  const rawCategories = Array.isArray(product.categories) ? product.categories : [];
+  return rawCategories
+    .map(category => (typeof category === 'string' ? slugify(category) : ''))
+    .filter(Boolean);
+};
+
 const PAGE_SIZE = 24;
 
 export default function Catalog() {
@@ -166,7 +187,7 @@ export default function Catalog() {
       }
 
       if (filters.category) {
-        query = query.overlaps('categories', [filters.category]);
+        query = query.overlaps('category_slugs', [filters.category]);
       }
 
       const trimmedSearch = filters.search.trim();
@@ -217,7 +238,7 @@ export default function Catalog() {
 
     return data.filter(product => {
       const salePrice = product.sale_price ?? product.map_price ?? 0;
-      const categories = Array.isArray(product.categories) ? product.categories : [];
+      const categories = getProductCategorySlugs(product);
 
       if (brandId && product.brand_id !== brandId) return false;
       if (filters.category && !categories.includes(filters.category)) return false;
@@ -487,7 +508,7 @@ export default function Catalog() {
                   : normalizedStatus.includes('out')
                   ? 'bg-red-100 text-red-700'
                   : 'bg-yellow-100 text-yellow-800';
-                const productCategories = (Array.isArray(product.categories) ? product.categories : [])
+                const productCategories = getProductCategorySlugs(product)
                   .map(slug => categoryMap.get(slug)?.label ?? toTitleCase(slug))
                   .slice(0, 2);
 

@@ -46,6 +46,14 @@ const env = {
 const mockMode = !env.apiKey || !env.clientId;
 let tokenCache: { token: string; expires: number } | null = null;
 
+const slugify = (value: string): string =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+
 // --- Schemas ---
 const runSchema = z.object({
   manufacturers: z.array(z.string()).optional(),
@@ -882,6 +890,16 @@ async function handlePublish(req: Request): Promise<Response> {
               .filter((segment) => segment.length > 0)
           : null;
 
+        const categorySlugs = Array.isArray(categoryList)
+          ? Array.from(
+              new Set(
+                categoryList
+                  .map((segment) => slugify(segment))
+                  .filter((segment): segment is string => segment.length > 0),
+              ),
+            )
+          : [];
+
         const productMedia = Array.isArray(supplierItem.product_media) ? supplierItem.product_media : [];
         const detailJson = supplierItem.detail_json && typeof supplierItem.detail_json === "object" ? supplierItem.detail_json : {};
 
@@ -913,6 +931,7 @@ async function handlePublish(req: Request): Promise<Response> {
             business_unit: supplierItem.business_unit || null,
             category_path: supplierItem.category_path || null,
             categories: categoryList,
+            category_slugs: categorySlugs,
             msrp,
             map_price: defaultSalePrice,
             reseller_price: resellerPrice,

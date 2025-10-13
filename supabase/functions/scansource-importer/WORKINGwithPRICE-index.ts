@@ -45,6 +45,14 @@ const env = {
 const mockMode = !env.apiKey || !env.clientId;
 let tokenCache: { token: string; expires: number } | null = null;
 
+const slugify = (value: string): string =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+
 // --- Schemas ---
 const runSchema = z.object({
   manufacturers: z.array(z.string()).optional(),
@@ -634,12 +642,23 @@ async function handlePublish(req: Request): Promise<Response> {
         const msrp = pricing.MSRP || pricing.msrp || 0;
         const mapPrice = pricing.UnitPrice || pricing.unitPrice || msrp;
 
+        const categorySlugs = supplierItem.category_path
+          ? Array.from(
+              new Set(
+                [supplierItem.category_path]
+                  .map((value) => slugify(String(value)))
+                  .filter((value) => value.length > 0),
+              ),
+            )
+          : [];
+
         const productData: any = {
           sku: supplierItem.item_number,
           title: supplierItem.title,
           model: supplierItem.mfr_item_number,
           short_desc: supplierItem.product_family_headline,
           categories: supplierItem.category_path ? [supplierItem.category_path] : null,
+          category_slugs: categorySlugs,
           msrp,
           map_price: mapPrice,
           stock_status: supplierItem.item_status || "Unknown",

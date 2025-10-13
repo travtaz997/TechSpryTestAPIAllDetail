@@ -18,6 +18,7 @@ interface Product {
   price_adjustment_value: number | null;
   updated_at: string;
   categories: string[] | null;
+  category_slugs: string[] | null;
 }
 
 interface Brand {
@@ -61,6 +62,14 @@ export default function AdminProducts() {
       `${category.name} ${category.slug}`.toLowerCase().includes(query),
     );
   }, [categories, categorySearch]);
+
+  const categoryLabelLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const category of categories) {
+      map.set(category.slug, category.name);
+    }
+    return map;
+  }, [categories]);
 
   useEffect(() => {
     loadData();
@@ -215,21 +224,31 @@ export default function AdminProducts() {
   }
 
   async function handleApplyCategories() {
-    if (selectedCategorySlugs.length === 0) return;
+    const normalizedSelectedSlugs = Array.from(
+      new Set(selectedCategorySlugs.map(slug => slug.trim()).filter(Boolean)),
+    );
+
+    if (normalizedSelectedSlugs.length === 0) return;
 
     setIsApplyingCategories(true);
     const errors: string[] = [];
 
     for (const productId of selectedProducts) {
-      let existingCategories: string[] = [];
-      const product = products.find((p) => p.id === productId);
+      let existingSlugs: string[] = [];
+      let existingLabels: string[] = [];
+      const product = products.find(p => p.id === productId);
 
-      if (product && Array.isArray(product.categories)) {
-        existingCategories = product.categories;
+      if (product) {
+        if (Array.isArray(product.category_slugs)) {
+          existingSlugs = product.category_slugs;
+        }
+        if (Array.isArray(product.categories)) {
+          existingLabels = product.categories;
+        }
       } else {
         const { data, error } = await supabase
           .from('products')
-          .select('categories')
+          .select('category_slugs, categories')
           .eq('id', productId)
           .maybeSingle();
 
@@ -238,19 +257,31 @@ export default function AdminProducts() {
           continue;
         }
 
-        existingCategories = (data?.categories as string[] | null) ?? [];
+        existingSlugs = Array.isArray(data?.category_slugs) ? data?.category_slugs : [];
+        existingLabels = Array.isArray(data?.categories) ? data?.categories : [];
       }
 
-      const sanitizedExisting = existingCategories.filter(
-        (category): category is string => typeof category === 'string' && category.trim() !== '',
+      const sanitizedExistingSlugs = existingSlugs
+        .map(slug => (typeof slug === 'string' ? slug.trim() : ''))
+        .filter(Boolean);
+      const sanitizedExistingLabels = existingLabels
+        .map(label => (typeof label === 'string' ? label.trim() : ''))
+        .filter(Boolean);
+
+      const updatedSlugs = Array.from(new Set([...sanitizedExistingSlugs, ...normalizedSelectedSlugs]));
+      const selectedLabels = normalizedSelectedSlugs.map(
+        slug => categoryLabelLookup.get(slug) ?? slug,
       );
-      const updatedCategories = Array.from(
-        new Set([...sanitizedExisting, ...selectedCategorySlugs.map(slug => slug.trim())]),
+      const updatedLabels = Array.from(
+        new Set([...sanitizedExistingLabels, ...selectedLabels.filter(label => label.trim() !== '')]),
       );
 
       const { error: updateError } = await supabase
         .from('products')
-        .update({ categories: updatedCategories })
+        .update({
+          category_slugs: updatedSlugs,
+          categories: updatedLabels,
+        })
         .eq('id', productId);
 
       if (updateError) {

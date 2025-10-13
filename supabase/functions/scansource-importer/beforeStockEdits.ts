@@ -45,6 +45,14 @@ const env = {
 const mockMode = !env.apiKey || !env.clientId;
 let tokenCache: { token: string; expires: number } | null = null;
 
+const slugify = (value: string): string =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+
 // --- Schemas ---
 const runSchema = z.object({
   manufacturers: z.array(z.string()).optional(),
@@ -674,6 +682,9 @@ async function handlePublish(req: Request): Promise<Response> {
 
         // Categories: store the supplier category_path as an array (like your sample)
         const categories = supplierItem.category_path ? [supplierItem.category_path] : [];
+        const categorySlugs = Array.from(
+          new Set(categories.map((category) => slugify(String(category))).filter((value) => value.length > 0)),
+        );
 
         // Optional fields that may exist in detail_json
         const datasheet_url =
@@ -710,6 +721,7 @@ async function handlePublish(req: Request): Promise<Response> {
           images,                // JSON[]
           datasheet_url,
           categories,            // JSON[]
+          category_slugs: categorySlugs,
           tags,                  // JSON[]
           specs,                 // JSON
           msrp: msrp != null ? Number(msrp) : null,

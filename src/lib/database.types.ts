@@ -83,6 +83,7 @@ export interface Database {
       images: Json
       datasheet_url: string
       categories: string[]
+      category_slugs: string[]
       category_path: string | null
       tags: string[]
       specs: Json
@@ -152,6 +153,7 @@ export interface Database {
       images?: Json
       datasheet_url?: string
       categories?: string[]
+      category_slugs?: string[] | null
       category_path?: string | null
       tags?: string[]
       specs?: Json
@@ -221,6 +223,7 @@ export interface Database {
       images?: Json
       datasheet_url?: string
       categories?: string[]
+      category_slugs?: string[] | null
       category_path?: string | null
       tags?: string[]
       specs?: Json
