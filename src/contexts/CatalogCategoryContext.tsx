@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { getDefaultCatalogCategories, type CatalogCategory } from '../utils/catalogCategories';
+export type { CatalogCategory } from '../utils/catalogCategories';
 
 interface CatalogCategoryContextValue {
   items: CatalogCategory[];

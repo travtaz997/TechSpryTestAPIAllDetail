@@ -8,7 +8,7 @@ import { getHeroImage } from '../utils/productMedia';
 import { useCatalogCategories } from '../contexts/CatalogCategoryContext';
 
 type Product = Database['public']['Tables']['products']['Row'];
-type Brand = Database['public']['Tables']['brands']['Row'];
+type BrandSummary = Pick<Database['public']['Tables']['brands']['Row'], 'id' | 'name' | 'slug'>;
 
 type CatalogFilters = {
   brand: string;
@@ -40,11 +40,32 @@ const toTitleCase = (value: string) =>
     .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(' ');
 
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+const getProductCategorySlugs = (product: Product): string[] => {
+  if (Array.isArray(product.category_slugs) && product.category_slugs.length > 0) {
+    return product.category_slugs
+      .map(slug => (typeof slug === 'string' ? slug.trim() : ''))
+      .filter(Boolean);
+  }
+
+  const rawCategories = Array.isArray(product.categories) ? product.categories : [];
+  return rawCategories
+    .map(category => (typeof category === 'string' ? slugify(category) : ''))
+    .filter(Boolean);
+};
+
 const PAGE_SIZE = 24;
 
 export default function Catalog() {
   const [rawProducts, setRawProducts] = useState<Product[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
+  const [brands, setBrands] = useState<BrandSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<CatalogFilters>(() => {
@@ -66,7 +87,7 @@ export default function Catalog() {
   const { items: catalogCategories } = useCatalogCategories();
 
   const brandLookup = useMemo(() => {
-    const map = new Map<string, Brand>();
+    const map = new Map<string, BrandSummary>();
     for (const brand of brands) {
       map.set(brand.id, brand);
     }
@@ -148,7 +169,12 @@ export default function Catalog() {
       console.error('Error loading brands:', error);
       return;
     }
-    setBrands(data ?? []);
+    const normalizedBrands: BrandSummary[] = (data ?? []).map(brand => ({
+      id: brand.id,
+      name: brand.name,
+      slug: brand.slug,
+    }));
+    setBrands(normalizedBrands);
   }
 
   async function loadProducts() {
@@ -161,7 +187,7 @@ export default function Catalog() {
       }
 
       if (filters.category) {
-        query = query.overlaps('categories', [filters.category]);
+        query = query.overlaps('category_slugs', [filters.category]);
       }
 
       const trimmedSearch = filters.search.trim();
@@ -212,7 +238,7 @@ export default function Catalog() {
 
     return data.filter(product => {
       const salePrice = product.sale_price ?? product.map_price ?? 0;
-      const categories = Array.isArray(product.categories) ? product.categories : [];
+      const categories = getProductCategorySlugs(product);
 
       if (brandId && product.brand_id !== brandId) return false;
       if (filters.category && !categories.includes(filters.category)) return false;
@@ -220,7 +246,10 @@ export default function Catalog() {
       if (hasMax && salePrice > max) return false;
       if (!searchTerm) return true;
 
-      const brandName = brandLookup.get(product.brand_id)?.name ?? product.manufacturer ?? '';
+      const brandName =
+        (product.brand_id ? brandLookup.get(product.brand_id)?.name : undefined) ??
+        product.manufacturer ??
+        '';
       const categoryLabels = categories.map(slug => categoryMap.get(slug)?.label ?? toTitleCase(slug));
       const tags = Array.isArray(product.tags) ? product.tags : [];
       const specValues =
@@ -254,7 +283,7 @@ export default function Catalog() {
   }
 
   function handleAddToCart(product: Product) {
-    const brand = brandLookup.get(product.brand_id);
+    const brand = product.brand_id ? brandLookup.get(product.brand_id) : undefined;
     const image = getHeroImage(product) ?? '';
 
     addItem({
@@ -466,7 +495,10 @@ export default function Catalog() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {paginatedProducts.map(product => {
-                const brandName = brandLookup.get(product.brand_id)?.name ?? product.manufacturer ?? 'TechSpry';
+                const brandName =
+                  (product.brand_id ? brandLookup.get(product.brand_id)?.name : undefined) ??
+                  product.manufacturer ??
+                  'TechSpry';
                 const productImage = getHeroImage(product) ?? FALLBACK_PRODUCT_IMAGE;
                 const formattedPrice = formatCurrency(product.sale_price ?? product.map_price);
                 const stockLabel = product.stock_status || product.item_status || 'Check availability';
@@ -476,7 +508,7 @@ export default function Catalog() {
                   : normalizedStatus.includes('out')
                   ? 'bg-red-100 text-red-700'
                   : 'bg-yellow-100 text-yellow-800';
-                const productCategories = (Array.isArray(product.categories) ? product.categories : [])
+                const productCategories = getProductCategorySlugs(product)
                   .map(slug => categoryMap.get(slug)?.label ?? toTitleCase(slug))
                   .slice(0, 2);
 

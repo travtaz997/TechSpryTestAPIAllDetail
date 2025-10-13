@@ -34,6 +34,14 @@ interface ProductFormData {
   published: boolean;
 }
 
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
 export default function AdminProductForm() {
   const productId = window.location.pathname.split('/')[3];
   const isEdit = productId && productId !== 'new';
@@ -148,7 +156,8 @@ export default function AdminProductForm() {
       }
 
       let images = null;
-      let categories = null;
+      let categories: string[] | null = null;
+      let categorySlugs: string[] | null = null;
       let tags = null;
       let specs = null;
       let dimensions = null;
@@ -163,9 +172,22 @@ export default function AdminProductForm() {
 
       if (formData.categories.trim()) {
         try {
-          categories = JSON.parse(formData.categories);
-          if (!Array.isArray(categories)) {
+          const parsed = JSON.parse(formData.categories);
+          if (!Array.isArray(parsed)) {
             throw new Error('Categories must be an array');
+          }
+
+          const sanitizedCategories = parsed
+            .map((category) => (typeof category === 'string' ? category.trim() : ''))
+            .filter((category): category is string => category.length > 0);
+
+          categories = sanitizedCategories.length > 0 ? sanitizedCategories : null;
+
+          if (sanitizedCategories.length > 0) {
+            const normalizedSlugs = Array.from(
+              new Set(sanitizedCategories.map(category => slugify(category)).filter(Boolean)),
+            );
+            categorySlugs = normalizedSlugs.length > 0 ? normalizedSlugs : null;
           }
         } catch {
           throw new Error('Invalid JSON format for categories');
@@ -210,6 +232,7 @@ export default function AdminProductForm() {
         images,
         datasheet_url: formData.datasheet_url || null,
         categories,
+        category_slugs: categorySlugs ?? [],
         tags,
         specs,
         msrp: parseFloat(formData.msrp),
