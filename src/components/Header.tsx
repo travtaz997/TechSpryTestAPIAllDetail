@@ -48,30 +48,7 @@ export default function Header() {
     setCategoryMenuOpen(open => !open);
   };
 
-  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmed = searchQuery.trim();
-    const params = new URLSearchParams();
-    if (trimmed) {
-      params.set('search', trimmed);
-    }
-
-    const nextUrl = `/catalog${params.toString() ? `?${params.toString()}` : ''}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}`;
-
-    if (nextUrl !== currentUrl) {
-      window.location.href = nextUrl;
-    } else {
-      window.location.reload();
-    }
-
-    setMobileMenuOpen(false);
-    setCategoryMenuOpen(false);
-  };
-
-  const closeMobileMenu = () => setMobileMenuOpen(false);
-
-  const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleHeaderSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = searchQuery.trim();
     const params = new URLSearchParams();
@@ -140,7 +117,7 @@ export default function Header() {
           </a>
 
           <div className="hidden lg:flex flex-1 max-w-2xl mx-8">
-            <form onSubmit={handleSearchSubmit} className="relative w-full">
+            <form onSubmit={handleHeaderSearchSubmit} className="relative w-full">
               <label htmlFor="site-search-desktop" className="sr-only">
                 Search the TechSpry catalog
               </label>
@@ -187,7 +164,7 @@ export default function Header() {
         </div>
 
         <div className="lg:hidden mt-4">
-          <form onSubmit={handleSearchSubmit} className="relative">
+          <form onSubmit={handleHeaderSearchSubmit} className="relative">
             <label htmlFor="site-search-mobile" className="sr-only">
               Search the TechSpry catalog
             </label>
